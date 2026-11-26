@@ -189,8 +189,12 @@ func ParseFileName(name string) *ParsedMedia {
 		}
 	}
 
-	// 6. 清洗
-	work = strings.NewReplacer(".", " ", "_", " ", "　", " ").Replace(work)
+	// 6. 清洗（英文与中文标点都当分隔符）
+	work = strings.NewReplacer(
+		".", " ", "_", " ", "　", " ",
+		"。", " ", "，", " ", "、", " ", "；", " ", "：", " ",
+		"！", " ", "？", " ", "《", " ", "》", " ", "「", " ", "」", " ",
+	).Replace(work)
 	work = collapseSpaces(work)
 	work = strings.Trim(work, " -—–·")
 
@@ -303,7 +307,9 @@ func lastYear(s string) (int, string) {
 
 func isYearSep(r rune) bool {
 	switch r {
-	case ' ', '.', '_', '-', '[', ']', '(', ')', '【', '】', '（', '）':
+	case ' ', '.', '_', '-', '[', ']', '(', ')', '【', '】', '（', '）',
+		// 中文标点也当分隔符："你的名字。2016" 这种写法很常见
+		'。', '，', '、', '；', '：', '！', '？', '《', '》', '「', '」':
 		return true
 	}
 	return false
