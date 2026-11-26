@@ -58,6 +58,17 @@ func main() {
 		os.Exit(1)
 	}
 
+	// 先探连通性：连不上就直接报错退出，别让每个文件都白等一次超时
+	if !*parseOnly {
+		if err := tmdb.Ping(); err != nil {
+			log.Errorf("TMDB 连不上: %v", err)
+			log.Errorf("请检查 config.yaml 里的 tmdb.proxy（本地代理端口，如 http://127.0.0.1:7890）")
+			log.Errorf("排查方法见 README 的「连不上 TMDB 怎么办」")
+			os.Exit(1)
+		}
+		log.Infof("TMDB 连接正常")
+	}
+
 	state, err := LoadState(cfg.StateFile)
 	if err != nil {
 		log.Warnf("读取状态文件失败，将从空状态开始: %v", err)

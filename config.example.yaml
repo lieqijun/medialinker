@@ -7,7 +7,13 @@
 tmdb:
   api_key: "把这里换成你的 TMDB API Key"
   language: zh-CN          # zh-CN 中文 / en-US 英文
-  proxy: ""                # 需要代理才能访问 TMDB 时填，例如 http://127.0.0.1:7890
+  # 国内直连 TMDB 基本不通（DNS 被污染），三选一：
+  # 1) 本地代理软件：填它的 HTTP 端口，常见 7890(Clash) / 10809(v2rayN) / 1080
+  # 2) 路由器上已跑代理：填路由器地址，例如 http://192.168.31.1:7890
+  # 3) 有现成的 TMDB 反代：填到 base_url，proxy 留空
+  proxy: ""
+  base_url: "https://api.themoviedb.org/3"
+  image_base: "https://image.tmdb.org/t/p/original"
   qps: 4                   # 每秒请求数，TMDB 限制约 50/s，4 足够安全
 
 # ---------- 整理规则 ----------

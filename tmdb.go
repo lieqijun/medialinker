@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"net"
 	"net/http"
 	"net/url"
 	"strconv"
@@ -17,10 +18,12 @@ const tmdbImageBase = "https://image.tmdb.org/t/p/original"
 
 // TMDB 客户端，带 QPS 限流和内存缓存
 type TMDB struct {
-	apiKey  string
-	lang    string
-	client  *http.Client
-	limiter *time.Ticker
+	apiKey    string
+	lang      string
+	baseURL   string
+	imageBase string
+	client    *http.Client
+	limiter   *time.Ticker
 
 	mu       sync.Mutex
 	movies   map[int]*MovieDetail
@@ -117,22 +120,37 @@ func NewTMDB(cfg TMDBConfig) (*TMDB, error) {
 		MaxIdleConns:        20,
 		IdleConnTimeout:     60 * time.Second,
 		TLSHandshakeTimeout: 15 * time.Second,
+		// 连接阶段单独限时：连不上时快速失败，不要每个文件都卡 20 秒
+		DialContext: (&net.Dialer{Timeout: 8 * time.Second, KeepAlive: 30 * time.Second}).DialContext,
 	}
 	if p := strings.TrimSpace(cfg.Proxy); p != "" {
 		pu, err := url.Parse(p)
 		if err != nil {
-			return nil, fmt.Errorf("代理地址无效: %w", err)
+			return nil, fmt.Errorf("代理地址无效（应形如 http://127.0.0.1:7890）: %w", err)
 		}
 		transport.Proxy = http.ProxyURL(pu)
+	} else {
+		// 没写 proxy 时，允许用 HTTPS_PROXY / HTTP_PROXY 环境变量
+		transport.Proxy = http.ProxyFromEnvironment
+	}
+	baseURL := strings.TrimRight(strings.TrimSpace(cfg.BaseURL), "/")
+	if baseURL == "" {
+		baseURL = tmdbAPIBase
+	}
+	imageBase := strings.TrimRight(strings.TrimSpace(cfg.ImageBase), "/")
+	if imageBase == "" {
+		imageBase = tmdbImageBase
 	}
 	return &TMDB{
-		apiKey:   strings.TrimSpace(cfg.APIKey),
-		lang:     cfg.Language,
-		client:   &http.Client{Timeout: 30 * time.Second, Transport: transport},
-		limiter:  time.NewTicker(time.Second / time.Duration(qps)),
-		movies:   map[int]*MovieDetail{},
-		tvs:      map[int]*TVDetail{},
-		searches: map[string]*SearchResult{},
+		apiKey:    strings.TrimSpace(cfg.APIKey),
+		lang:      cfg.Language,
+		baseURL:   baseURL,
+		imageBase: imageBase,
+		client:    &http.Client{Timeout: 30 * time.Second, Transport: transport},
+		limiter:   time.NewTicker(time.Second / time.Duration(qps)),
+		movies:    map[int]*MovieDetail{},
+		tvs:       map[int]*TVDetail{},
+		searches:  map[string]*SearchResult{},
 	}, nil
 }
 
@@ -140,7 +158,7 @@ func NewTMDB(cfg TMDBConfig) (*TMDB, error) {
 func (t *TMDB) get(path string, params map[string]string, out any) error {
 	<-t.limiter.C
 
-	u, err := url.Parse(tmdbAPIBase + path)
+	u, err := url.Parse(t.baseURL + path)
 	if err != nil {
 		return err
 	}
@@ -170,7 +188,7 @@ func (t *TMDB) get(path string, params map[string]string, out any) error {
 
 	resp, err := t.client.Do(req)
 	if err != nil {
-		return fmt.Errorf("请求 TMDB 失败: %w", err)
+		return fmt.Errorf("请求 TMDB 失败: %w（如提示连接超时，通常是网络问题，请在 config.yaml 的 tmdb.proxy 填本地代理，例如 http://127.0.0.1:7890）", err)
 	}
 	defer resp.Body.Close()
 
@@ -189,6 +207,16 @@ func (t *TMDB) get(path string, params map[string]string, out any) error {
 		return fmt.Errorf("TMDB 返回 HTTP %d: %s", resp.StatusCode, truncate(string(body), 200))
 	}
 	return json.Unmarshal(body, out)
+}
+
+// Ping 启动时探一次连通性。连不上就别一个一个文件去等超时了。
+func (t *TMDB) Ping() error {
+	var out struct {
+		Images struct {
+			BaseURL string `json:"base_url"`
+		} `json:"images"`
+	}
+	return t.get("/configuration", nil, &out)
 }
 
 // Search 搜索电影或剧集，返回最可能的一条
@@ -414,7 +442,7 @@ func (t *TMDB) DownloadImage(imagePath, dest string) error {
 		return fmt.Errorf("图片路径为空")
 	}
 	<-t.limiter.C
-	resp, err := t.client.Get(tmdbImageBase + imagePath)
+	resp, err := t.client.Get(t.imageBase + imagePath)
 	if err != nil {
 		return err
 	}

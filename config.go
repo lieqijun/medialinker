@@ -24,6 +24,10 @@ type TMDBConfig struct {
 	APIKey   string `yaml:"api_key"`
 	Language string `yaml:"language"`
 	Proxy    string `yaml:"proxy"`
+	// BaseURL 可填镜像/反代地址，默认 https://api.themoviedb.org/3
+	BaseURL string `yaml:"base_url"`
+	// ImageBase 图片地址，默认 https://image.tmdb.org/t/p/original
+	ImageBase string `yaml:"image_base"`
 	// 每次请求间隔，避免触发限流
 	QPS int `yaml:"qps"`
 }
@@ -73,8 +77,10 @@ type WatchConfig struct {
 func DefaultConfig() *Config {
 	return &Config{
 		TMDB: TMDBConfig{
-			Language: "zh-CN",
-			QPS:      4,
+			Language:  "zh-CN",
+			QPS:       4,
+			BaseURL:   "https://api.themoviedb.org/3",
+			ImageBase: "https://image.tmdb.org/t/p/original",
 		},
 		Transfer: TransferConfig{
 			Mode:            "hardlink",
@@ -193,6 +199,15 @@ func (c *Config) validate(requireAPI bool) error {
 	if c.TMDB.Language == "" {
 		c.TMDB.Language = "zh-CN"
 	}
+	if c.TMDB.BaseURL == "" {
+		c.TMDB.BaseURL = "https://api.themoviedb.org/3"
+	}
+	if c.TMDB.ImageBase == "" {
+		c.TMDB.ImageBase = "https://image.tmdb.org/t/p/original"
+	}
+	c.TMDB.BaseURL = strings.TrimRight(strings.TrimSpace(c.TMDB.BaseURL), "/")
+	c.TMDB.ImageBase = strings.TrimRight(strings.TrimSpace(c.TMDB.ImageBase), "/")
+	c.TMDB.Proxy = strings.TrimSpace(c.TMDB.Proxy)
 	return nil
 }
 

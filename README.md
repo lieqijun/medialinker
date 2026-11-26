@@ -117,6 +117,46 @@ Some.Show.S02E05.MKV        ->  Some Show - S02E05.MKV     （原样保留大小
 
 判定顺序是：源目录显式指定 > TMDB 类型 > 文件名特征。**TMDB 类型是最终依据**，文件名像动漫（字幕组方括号、`[01]` 集数）只用于 `-parse-only` 预览时估算，不会因为名字像就误丢进动漫目录。
 
+## 连不上 TMDB 怎么办
+
+国内直连 `api.themoviedb.org` 基本不通，典型报错是：
+
+```
+TMDB 搜索失败: 请求 TMDB 失败: ... dial tcp [2a03:2880:...]:443: connectex: A connection attempt failed ...
+```
+
+`2a03:2880:` 开头或 `31.13.x.x` 这类 IP 是 DNS 污染的结果（那是 Facebook 的地址段），不是 TMDB。三条路：
+
+**1. 走本地代理**（最常见）
+
+```yaml
+tmdb:
+  proxy: "http://127.0.0.1:7890"   # Clash 7890 / v2rayN 10809 / SSR 1080
+```
+
+也可以不写配置，直接设环境变量：`set HTTPS_PROXY=http://127.0.0.1:7890`
+
+先用这条命令确认代理通不通，返回 `401` 就说明连通了（401 是没带 key，正常）：
+
+```bash
+curl -x http://127.0.0.1:7890 -s -o nul -w "%{http_code}\n" https://api.themoviedb.org/3/
+```
+
+**2. 走路由器上的代理**
+
+```yaml
+  proxy: "http://192.168.31.1:7890"
+```
+
+**3. 用 TMDB 反代镜像**
+
+```yaml
+  base_url: "https://your-tmdb-mirror.example.com/3"
+  image_base: "https://your-tmdb-mirror.example.com/t/p/original"
+```
+
+镜像地址经常失效，且会把你的 API Key 经过第三方，安全性自己评估。
+
 ## 已知限制
 
 - 只做电影和剧集，不处理音乐、图片
