@@ -3,7 +3,6 @@ package main
 import (
 	"encoding/xml"
 	"fmt"
-	"os"
 	"path/filepath"
 	"strings"
 	"time"
@@ -46,9 +45,9 @@ type xmlThumb struct {
 }
 
 type movieNFO struct {
-	XMLName   xml.Name `xml:"movie"`
-	Title     string   `xml:"title"`
-	Original  string   `xml:"originaltitle"`
+	XMLName   xml.Name   `xml:"movie"`
+	Title     string     `xml:"title"`
+	Original  string     `xml:"originaltitle"`
 	SortTitle string     `xml:"sorttitle,omitempty"`
 	Ratings   xmlRatings `xml:"ratings"`
 	Plot      string     `xml:"plot"`
@@ -74,19 +73,19 @@ type movieNFO struct {
 // ---------------- 剧集 NFO ----------------
 
 type tvshowNFO struct {
-	XMLName  xml.Name `xml:"tvshow"`
-	Title    string   `xml:"title"`
-	ShowTitle string  `xml:"showtitle"`
-	Original string   `xml:"originaltitle"`
-	SortTitle string  `xml:"sorttitle,omitempty"`
-	Ratings  xmlRatings `xml:"ratings"`
-	Plot     string `xml:"plot"`
-	Outline  string `xml:"outline,omitempty"`
-	Season   int    `xml:"season"`
-	Episode  int    `xml:"episode"`
-	Status   string `xml:"status,omitempty"`
-	Premier  string `xml:"premiered,omitempty"`
-	Year     int    `xml:"year"`
+	XMLName   xml.Name   `xml:"tvshow"`
+	Title     string     `xml:"title"`
+	ShowTitle string     `xml:"showtitle"`
+	Original  string     `xml:"originaltitle"`
+	SortTitle string     `xml:"sorttitle,omitempty"`
+	Ratings   xmlRatings `xml:"ratings"`
+	Plot      string     `xml:"plot"`
+	Outline   string     `xml:"outline,omitempty"`
+	Season    int        `xml:"season"`
+	Episode   int        `xml:"episode"`
+	Status    string     `xml:"status,omitempty"`
+	Premier   string     `xml:"premiered,omitempty"`
+	Year      int        `xml:"year"`
 
 	Thumb     xmlThumb      `xml:"thumb"`
 	Fanart    xmlFanart     `xml:"fanart"`
@@ -101,15 +100,15 @@ type tvshowNFO struct {
 // ---------------- 单集 NFO ----------------
 
 type episodeNFO struct {
-	XMLName   xml.Name `xml:"episodedetails"`
-	Title     string   `xml:"title"`
-	ShowTitle string   `xml:"showtitle"`
-	Season    int      `xml:"season"`
-	Episode   int      `xml:"episode"`
+	XMLName   xml.Name   `xml:"episodedetails"`
+	Title     string     `xml:"title"`
+	ShowTitle string     `xml:"showtitle"`
+	Season    int        `xml:"season"`
+	Episode   int        `xml:"episode"`
 	Plot      string     `xml:"plot"`
 	Ratings   xmlRatings `xml:"ratings"`
 	Aired     string     `xml:"aired,omitempty"`
-	Thumb     string `xml:"thumb,omitempty"`
+	Thumb     string     `xml:"thumb,omitempty"`
 }
 
 func writeXML(path string, v any) error {
@@ -137,14 +136,11 @@ func buildRatings(v float64) xmlRatings {
 	}}}
 }
 
+// buildActors 演员表。不下载演员头像，所以不写 thumb，避免播放器去找不存在的图
 func buildActors(cast []CastMember) []xmlActor {
 	out := make([]xmlActor, 0, len(cast))
 	for i, c := range cast {
-		thumb := ""
-		if c.Profile != "" {
-			thumb = fmt.Sprintf("actor_%02d.jpg", i+1)
-		}
-		out = append(out, xmlActor{Name: c.Name, Role: c.Character, Order: i, Thumb: thumb})
+		out = append(out, xmlActor{Name: c.Name, Role: c.Character, Order: i})
 	}
 	return out
 }
@@ -222,8 +218,8 @@ func WriteTVShowNFO(dir string, d *TVDetail, log *Logger) error {
 	return nil
 }
 
-// WriteEpisodeNFO 写单集 NFO（与视频同名）
-func WriteEpisodeNFO(videoPath string, ep *EpisodeDetail, showName string, season, episode int) error {
+// WriteEpisodeNFO 写单集 NFO（与视频同名）。thumb 为空则不写缩略图字段
+func WriteEpisodeNFO(videoPath string, ep *EpisodeDetail, showName string, season, episode int, thumb string) error {
 	n := &episodeNFO{
 		Title:     firstNonEmpty(ep.Name, fmt.Sprintf("第 %d 集", episode)),
 		ShowTitle: showName,
@@ -232,7 +228,7 @@ func WriteEpisodeNFO(videoPath string, ep *EpisodeDetail, showName string, seaso
 		Plot:      ep.Overview,
 		Ratings:   buildRatings(ep.VoteAverage),
 		Aired:     ep.AirDate,
-		Thumb:     "episode.jpg",
+		Thumb:     thumb,
 	}
 	path := strings.TrimSuffix(videoPath, filepath.Ext(videoPath)) + ".nfo"
 	return writeXML(path, n)
@@ -240,9 +236,4 @@ func WriteEpisodeNFO(videoPath string, ep *EpisodeDetail, showName string, seaso
 
 func round1(v float64) float64 {
 	return float64(int(v*10+0.5)) / 10
-}
-
-// ensureDir 确保目录存在
-func ensureDir(dir string) error {
-	return os.MkdirAll(dir, 0o775)
 }

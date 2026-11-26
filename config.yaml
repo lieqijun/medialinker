@@ -2,6 +2,9 @@
 # media-linker 配置文件
 # 只需要改三处：tmdb.api_key、sources、transfer.media_dir
 # 改完直接双击 medialinker.exe 即可运行
+#
+# 路径写法：/ 和 \ 都认，D:\Downloads 与 D:/Downloads 等价，
+# 可以直接从 Windows 资源管理器「复制路径」粘进来（带双引号也行）。
 # ============================================================
 
 # ---------- TMDB ----------
@@ -20,7 +23,7 @@ tmdb:
 #   3) 电影一律进 Movies（动画电影也算电影）
 # 只有在文件名实在识别不出类型时，才需要单独加一条强制 type
 sources:
-  - path: "D:/Downloads"   # 改成你自己的下载目录
+  - path: D:\Downloads     # 改成你自己的下载目录（也可以写 D:/Downloads）
     type: ""               # 留空自动分类；也可强制写 movie / tv / anime
     recursive: true        # 是否递归子目录，默认 true
 
@@ -29,7 +32,7 @@ transfer:
   # 必改：媒体库根目录。只填到 media 这一层，
   # 程序会自动在下面创建 Movies / TVShows / Anime 三个子目录。
   # 提示：要和 sources 在同一个硬盘/分区，否则硬链接会失败。
-  media_dir: "D:/Media"
+  media_dir: D:\Media
 
   # hardlink 硬链接（不占额外空间，要求源和媒体库在同一个硬盘/分区）
   # copy     复制（跨盘可用，占双倍空间）

@@ -58,8 +58,21 @@ func tidyPart(s string) string {
 	return strings.Trim(s, " .-_")
 }
 
+// TargetPaths 整理后的落盘位置
+type TargetPaths struct {
+	Root string // Movies / TVShows / Anime 之一
+	Show string // 作品目录，NFO 与海报放这里
+	Dir  string // 文件所在目录（剧集含 Season 子目录）
+	File string // 文件名
+}
+
+// Name 完整文件路径
+func (t TargetPaths) Name() string { return filepath.Join(t.Dir, t.File) }
+
 // targetPaths 计算目标目录与文件名
-func targetPaths(p *ParsedMedia, m *MediaInfo, cfg *Config) (dir, file string, err error) {
+func targetPaths(p *ParsedMedia, m *MediaInfo, cfg *Config) (TargetPaths, error) {
+	var tp TargetPaths
+
 	srcExt := p.ext()
 	vars := map[string]string{
 		"title":      m.Title,
@@ -92,20 +105,26 @@ func targetPaths(p *ParsedMedia, m *MediaInfo, cfg *Config) (dir, file string, e
 	}
 
 	if rootDir == "" {
-		return "", "", fmt.Errorf("没有可用的输出目录，请检查 transfer.media_dir 配置")
+		return tp, fmt.Errorf("没有可用的输出目录，请检查 transfer.media_dir 配置")
 	}
 
-	folder := tidyPart(renderTemplate(folderTpl, vars))
-	dir = filepath.Join(rootDir, folder)
+	tp.Root = rootDir
+	tp.Show = filepath.Join(rootDir, tidyPart(renderTemplate(folderTpl, vars)))
+	if tp.Show == rootDir {
+		// 模板渲染为空时退回根目录，避免文件散落在根上
+		tp.Show = filepath.Join(rootDir, tidyPart(m.Title))
+	}
+	tp.Dir = tp.Show
 	if seasonTpl != "" {
-		dir = filepath.Join(dir, tidyPart(renderTemplate(seasonTpl, vars)))
+		if season := tidyPart(renderTemplate(seasonTpl, vars)); season != "" {
+			tp.Dir = filepath.Join(tp.Show, season)
+		}
 	}
-	file = finalizeFileName(renderTemplate(fileTpl, vars), srcExt, m)
-
-	if file == "" {
-		return "", "", fmt.Errorf("文件名模板渲染结果为空，请检查 transfer 配置")
+	tp.File = finalizeFileName(renderTemplate(fileTpl, vars), srcExt, m)
+	if tp.File == "" {
+		return tp, fmt.Errorf("文件名模板渲染结果为空，请检查 transfer 配置")
 	}
-	return dir, file, nil
+	return tp, nil
 }
 
 // finalizeFileName 收尾：后缀一律取源文件，模板里写什么后缀都不生效。
@@ -136,18 +155,13 @@ type MediaInfo struct {
 	Anime         bool // 是否归入动漫目录
 }
 
-// Transfer 把文件按规则硬链接/复制到媒体库
-// 返回最终文件路径
-func Transfer(src string, p *ParsedMedia, m *MediaInfo, cfg *Config, log *Logger) (string, error) {
-	dir, name, err := targetPaths(p, m, cfg)
-	if err != nil {
-		return "", err
-	}
-	if err := os.MkdirAll(dir, 0o775); err != nil {
-		return "", fmt.Errorf("创建目录失败 %s: %w", dir, err)
+// Transfer 把文件按规则硬链接/复制到媒体库，返回最终文件路径
+func Transfer(src string, tp TargetPaths, cfg *Config, log *Logger) (string, error) {
+	if err := os.MkdirAll(tp.Dir, 0o775); err != nil {
+		return "", fmt.Errorf("创建目录失败 %s: %w", tp.Dir, err)
 	}
 
-	dst := filepath.Join(dir, name)
+	dst := tp.Name()
 
 	// 已经存在同一硬链接（同 inode）视为已完成
 	if sameFile(src, dst) {
@@ -192,7 +206,7 @@ func Transfer(src string, p *ParsedMedia, m *MediaInfo, cfg *Config, log *Logger
 	log.Infof("已整理: %s -> %s", filepath.Base(src), finalDst)
 
 	// 顺带把同名字幕一起带过去
-	copySideSubtitles(src, dir, finalDst, cfg.Transfer.Mode, log)
+	copySideSubtitles(src, tp.Dir, finalDst, cfg.Transfer.Mode, log)
 
 	return finalDst, nil
 }
@@ -270,20 +284,11 @@ func copyFile(src, dst string) error {
 	}
 	defer out.Close()
 
-	buf := make([]byte, 1<<20)
-	for {
-		n, rerr := in.Read(buf)
-		if n > 0 {
-			if _, werr := out.Write(buf[:n]); werr != nil {
-				return werr
-			}
-		}
-		if rerr == io.EOF {
-			break
-		}
-		if rerr != nil {
-			return rerr
-		}
+	if _, err := io.Copy(out, in); err != nil {
+		// 复制中断时清理掉半个文件，避免下次被当成"已存在"
+		out.Close()
+		os.Remove(dst)
+		return err
 	}
 	return out.Sync()
 }

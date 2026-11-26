@@ -2,18 +2,18 @@
 
 只做两件事的媒体整理工具：**硬链接搬运** + **TMDB 刮削**。没有站点、没有资源搜索、没有订阅。
 
-Go 编写，单文件可执行，内存占用通常几十 MB。
+Go 写的单文件 exe，双击就运行，内存占用几十 MB。
 
 ## 它做什么
 
 1. 扫描你指定的下载目录
 2. 从文件名解析出标题、年份、季、集
 3. 到 TMDB 查详情（中文元数据）
-4. 按模板把文件硬链接到媒体库目录（重命名为规范名称，**后缀保持源文件不变**）
+4. 按模板硬链接到媒体库并重命名，**后缀保持源文件不变**
 5. 生成 Emby / Jellyfin / Kodi 能读的 `.nfo`，下载 `poster.jpg`、`fanart.jpg`
-6. 记录已处理文件，下次不会重复处理
+6. 记录已处理文件，下次不重复处理
 
-电影、电视剧、动漫自动分流到 `media_dir` 下的 `Movies` / `TVShows` / `Anime` 三个子目录，互不混放。**源目录只需要一个**，分类由程序判断。
+电影、电视剧、动漫自动分流到 `media_dir` 下的 `Movies` / `TVShows` / `Anime`，**源目录只要一个**，分类由程序判断。
 
 ## 下载
 
@@ -21,87 +21,81 @@ Go 编写，单文件可执行，内存占用通常几十 MB。
 
 | 文件 | 用途 |
 |---|---|
-| `medialinker.exe` | 主程序，**双击运行** |
+| `medialinker.exe` | 主程序，双击运行 |
 | `config.yaml` | 配置文件，改三处就能用 |
 
 只发布 Windows x86_64 版本。
 
-## 使用
+## 改配置
 
-**1. 改配置**
-
-用记事本打开 `config.yaml`，只改三处：
+只改三处：
 
 ```yaml
 tmdb:
-  api_key: "你的 TMDB Key"      # 到 https://www.themoviedb.org/settings/api 申请
+  api_key: "你的 TMDB Key"     # https://www.themoviedb.org/settings/api
 sources:
-  - path: "D:/Downloads"       # 你的下载目录，一个就够
+  - path: D:\Downloads         # 下载目录，一个就够
     type: ""                   # 留空 = 自动分类
 transfer:
-  media_dir: "D:/Media"        # 媒体库根目录，只填到 media 这层
+  media_dir: D:\Media          # 媒体库根目录，只填到 media 这层
 ```
 
-源目录和输出目录是挨着的两段，一起配完即可。
+**路径的两种斜杠都认**：`D:\Media` 和 `D:/Media` 等价。可以直接在资源管理器里对着文件夹「复制路径」粘进来，带不带双引号都行——`"D:\work\media-linker\dist"` 这种原样粘贴也能正确识别。
 
-`media_dir` 不用自己建子目录，程序启动时会自动创建 `Movies`、`TVShows`、`Anime` 三个。
+`media_dir` 不用自己建子目录，启动时会自动创建 `Movies`、`TVShows`、`Anime`。
 
-`type` 留空即可：程序先按文件名判断是电影还是剧集，查到 TMDB 后如果**剧集**的类型含「动画」就进 `Anime`，否则进 `TVShows`；**电影一律进 `Movies`**，动画电影也算电影。也就是说**一个下载目录就能自动分成三类**，不需要预先分好。
+`type` 留空即可：程序先按文件名判断电影还是剧集，查到 TMDB 后**剧集**类型含「动画」就进 `Anime`，否则进 `TVShows`；**电影一律进 `Movies`**，动画电影也算电影。
 
-**2. 双击 `medialinker.exe`**
+## 运行
 
-就这么简单，它会自己找同目录的 `config.yaml`。
+双击 `medialinker.exe`，它会自己找同目录的 `config.yaml`。
 
-第一次建议先只看结果、不写文件 —— 在文件夹地址栏输入 `cmd` 回车打开命令行，然后：
+第一次建议先只看结果不写文件 —— 在文件夹地址栏输入 `cmd` 回车，然后：
 
 ```bash
 medialinker.exe -dry-run -once
 ```
 
-它会联网查 TMDB 并打印每个文件将要放到的位置，一个字节都不写。确认路径都对，再双击 `medialinker.exe` 正式跑。
+它会联网查 TMDB 并打印每个文件将要放到哪，一个字节都不写。确认没错再双击正式跑。
 
-黑窗口不要关，最小化即可。默认每 300 秒扫一次，Ctrl+C 停止。
+黑窗口别关，最小化即可。默认每 300 秒扫一次，Ctrl+C 停止。
 
-**3. 跑起来之后**
+启动时窗口会打印配置和三个媒体库目录，出错也会停住等回车，不会一闪就没。
 
-窗口里会实时打印每个文件的过程：
-
-```
-media-linker v0.1.7 启动
-配置文件: D:\medialinker\config.yaml
-源目录:   D:\Downloads
-媒体库:   D:\Media
-  ├─ 电影   D:\Media\Movies
-  ├─ 电视剧 D:\Media\TVShows
-  └─ 动漫   D:\Media\Anime
-```
-
-出错时窗口也会停住等你按回车，不会一闪就消失。
-
-## 命令参数
+## 参数
 
 | 参数 | 作用 |
 |---|---|
 | `-config <路径>` | 配置文件，默认用 exe 同目录的 `config.yaml` |
 | `-once` | 只扫一次就退出 |
 | `-dry-run` | 只打印，不写文件 |
-| `-parse-only` | 只解析文件名并打印识别结果，不联网、不写文件（没填 API Key 也能跑） |
+| `-parse-only` | 只解析文件名并打印结果，不联网、不写文件（没填 Key 也能跑） |
 | `-interval <秒>` | 覆盖配置里的扫描间隔 |
 | `-version` | 打印版本 |
 
-不带任何参数双击运行时，程序在退出前会停住等回车（只在双击这种方式下），方便看错误信息。
+不带任何参数双击运行时，退出前会停住等回车，方便看错误信息。
 
-## 关于硬链接
+## 目录与后缀
 
-硬链接不复制数据，同一份文件在下载目录和媒体库各有一个名字，只占一份空间。
+**后缀**：一律用源文件原后缀，模板里 `{ext}` 写不写都行。
 
-硬性前提：**源目录和媒体库必须在同一个分区**。跨分区会失败，程序会提示，这时把 `transfer.mode` 改成 `copy`。
+```
+The.Matrix.1999.1080p.mkv  ->  The Matrix (1999).mkv     （模板写 .mp4 也还是 .mkv）
+Some.Show.S02E05.MKV       ->  Some Show - S02E05.MKV    （大小写原样保留）
+```
 
-Windows 下 NTFS 支持硬链接，但**不能跨盘符**。`D:\Downloads` 和 `D:\Media` 可以，`D:\Downloads` 到 `E:\Media` 不行。
+**目录**：
+
+| 判定 | 目标目录 | 模板 |
+|---|---|---|
+| 电影（含动画电影） | `<media_dir>/Movies` | `movie_*` |
+| 剧集，类型里没有「动画」 | `<media_dir>/TVShows` | `tv_*` |
+| 剧集，类型里有「动画」 | `<media_dir>/Anime` | `anime_*`，留空沿用 `tv_*` |
+| 源目录写了 `type: anime` 且是剧集 | 强制 `Anime` | 同上 |
+
+判定顺序：源目录显式指定 > TMDB 类型 > 文件名特征。**TMDB 类型是最终依据**，文件名只是 `-parse-only` 预览时的估算。**动画电影按电影处理**，进 `Movies`，只有剧集形态的动画才进 `Anime`。
 
 ## 文件名识别
-
-支持这些常见形式：
 
 ```
 流浪地球2.2023.2160p.WEB-DL.H265.mkv          -> 流浪地球2 (2023)
@@ -112,69 +106,20 @@ Some.Show.S02E05.1080p.WEB-DL.mkv             -> Some Show S02E05
 律政剧.第08集.mkv                              -> 律政剧 S01E08
 ```
 
-识别不准时，把目录的 `type` 写成 `movie`、`tv` 或 `anime` 可以强制类型。
+识别不准时，给源目录加 `type: movie`、`tv` 或 `anime` 强制类型。
 
-## 后缀与目录规则
+## 硬链接
 
-**后缀**：一律使用源文件的原后缀，模板里的 `{ext}` 写不写都行。
+硬链接不复制数据，同一份文件在下载目录和媒体库各有一个名字，只占一份空间。
 
-```
-The.Matrix.1999.1080p.mkv   ->  The Matrix (1999).mkv      （模板写成 .mp4 也还是 .mkv）
-Some.Show.S02E05.MKV        ->  Some Show - S02E05.MKV     （原样保留大小写）
-```
+硬性前提：**源目录和媒体库必须在同一个分区**。跨分区会失败并提示，这时把 `transfer.mode` 改成 `copy`。Windows 下 NTFS 支持硬链接但不能跨盘符，`D:\Downloads` 到 `D:\Media` 可以，到 `E:\Media` 不行。
 
-程序会先摘掉模板渲染出来的视频后缀，再把源后缀拼回去，所以不会出现无后缀或 `name.mkv.mkv`。
+## 连不上 TMDB
 
-**目录**：`media_dir` 下固定三个子目录，按类型自动分流。
-
-| 判定 | 目标目录 | 模板 |
-|---|---|---|
-| 电影（含动画电影） | `<media_dir>/Movies` | `movie_*` |
-| 剧集，类型里没有「动画」 | `<media_dir>/TVShows` | `tv_*` |
-| 剧集，类型里有「动画」 | `<media_dir>/Anime` | `anime_*`，留空则沿用 `tv_*` |
-| 源目录写了 `type: anime` 且是剧集 | 强制 `Anime` | 同上 |
-
-**动画电影按电影处理**，进 `Movies`，不建 `Season 01`。只有剧集形态的动画才进 `Anime`。
-
-判定顺序是：源目录显式指定 > TMDB 类型 > 文件名特征。**TMDB 类型是最终依据**，文件名像动漫（字幕组方括号、`[01]` 集数）只用于 `-parse-only` 预览时估算，不会因为名字像就误丢进动漫目录。
-
-三个子目录名是固定的，不需要也不能在配置里改。
-
-## 连不上 TMDB 怎么办
-
-程序的 API 域名固定是 `https://api.tmdb.org/3`，**不需要代理，配置里也没有代理项**。
-
-容易被坑的是另一个官方域名 `api.themoviedb.org`：国内常被 DNS 污染，解析到 `31.13.x.x` 或 `2a03:2880:` 开头（Facebook 的地址段）。两个官方域名走不同 CDN：
-
-| 域名 | 国内实测 |
-|---|---|
-| `api.tmdb.org` | 走 CloudFront，**可直连**（本程序用这个） |
-| `api.themoviedb.org` | 被污染，解析到 Facebook 的 IP，超时 |
-| `tmdb.nastool.cn` | 域名已失效（NXDOMAIN） |
-| `tmdb.nastool.workers.dev` | 被污染，同样解析到 Facebook 的 IP |
-
-后两个是 nas-tools 里内置的镜像，实测都不能用。
-
-自己验一下（把 KEY 换成你的）：
-
-```bash
-curl -s -o nul -w "%{http_code}\n" "https://api.tmdb.org/3/configuration?api_key=你的KEY"
-```
-
-返回 `200` 说明通。返回 `000` 或超时，就是这台机器的网络确实出不去，需要自己在系统层面解决（改 hosts、走路由器代理），程序本身不再提供 `base_url` 配置项。
+API 域名固定是 `https://api.tmdb.org/3`，不需要代理，配置里也没有代理项。连不上就是这台机器的网络出不去，需要自己在系统层面解决（改 hosts、走路由器代理）。
 
 ## 已知限制
 
-- 只做电影和剧集，不处理音乐、图片
-- 动画电影按电影存放；只有剧集形态的动画进 `Anime`（`Season 01/` + `tvshow.nfo`）
-- 多集合并的文件（如 `S01E01-E03`）只会取第一个集数
-- 没有 Web 界面，没有自动更新，纯命令行
-
-## 从源码编译
-
-```bash
-go mod tidy
-go build -trimpath -ldflags "-s -w" -o medialinker.exe .
-```
-
-或者推一个 `v*` tag，GitHub Actions 会自动编译 Windows 版并打包成 `medialinker-windows-amd64.zip` 发布到 Release。
+- 只处理电影和剧集，不管音乐、图片
+- 多集合并的文件（`S01E01-E03`）只取第一个集数
+- 纯命令行，没有 Web 界面，没有自动更新

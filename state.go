@@ -87,16 +87,3 @@ func (s *State) save() error {
 	}
 	return os.Rename(tmp, s.path)
 }
-
-// Prune 清理目标已不存在的记录
-func (s *State) Prune() {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	for k, v := range s.data {
-		if v.Target != "" {
-			if _, err := os.Stat(v.Target); err != nil {
-				delete(s.data, k)
-			}
-		}
-	}
-}

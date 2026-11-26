@@ -7,6 +7,7 @@ import (
 	"net"
 	"net/http"
 	"net/url"
+	"os"
 	"strconv"
 	"strings"
 	"sync"
@@ -155,8 +156,14 @@ func (t *TMDB) doGet(base, path string, params map[string]string, out any) error
 	if err != nil {
 		return err
 	}
+	// v4 的 token 以 eyJ 开头（JWT），用 Bearer；v3 的 32 位 key 走 query
+	useBearer := strings.HasPrefix(t.apiKey, "eyJ")
+
 	q := u.Query()
 	q.Set("language", t.lang)
+	if !useBearer {
+		q.Set("api_key", t.apiKey)
+	}
 	for k, v := range params {
 		if v != "" {
 			q.Set(k, v)
@@ -169,14 +176,8 @@ func (t *TMDB) doGet(base, path string, params map[string]string, out any) error
 		return err
 	}
 	req.Header.Set("Accept", "application/json")
-	// v4 的 token 以 eyJ 开头（JWT），用 Bearer；v3 的 32 位 key 走 query
-	if strings.HasPrefix(t.apiKey, "eyJ") {
+	if useBearer {
 		req.Header.Set("Authorization", "Bearer "+t.apiKey)
-	} else {
-		q := u.Query()
-		q.Set("api_key", t.apiKey)
-		u.RawQuery = q.Encode()
-		req.URL = u
 	}
 
 	resp, err := t.client.Do(req)
@@ -476,9 +477,12 @@ func (t *TMDB) DownloadImage(imagePath, dest string) error {
 	if err != nil {
 		return err
 	}
-	defer f.Close()
-	_, err = io.Copy(f, resp.Body)
-	return err
+	if _, err := io.Copy(f, resp.Body); err != nil {
+		f.Close()
+		os.Remove(dest) // 别留下半个图片，下次会被当成已下载
+		return err
+	}
+	return f.Close()
 }
 
 // ---- 内部原始结构 ----

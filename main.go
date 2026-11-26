@@ -13,7 +13,7 @@ import (
 )
 
 // 版本号，编译时可用 -ldflags "-X main.appVersion=x.y.z" 覆盖
-var appVersion = "0.1.0"
+var appVersion = "0.1.9"
 
 func main() {
 	var (
@@ -53,13 +53,11 @@ func main() {
 	log := NewLogger(cfg.LogLevel)
 	log.Infof("media-linker %s 启动", appVersion)
 	log.Infof("配置文件: %s", cfgFile)
-	if len(cfg.Sources) > 0 {
-		for i, s := range cfg.Sources {
-			if i == 0 {
-				log.Infof("源目录:   %s", s.Path)
-			} else {
-				log.Infof("          %s", s.Path)
-			}
+	for i, s := range cfg.Sources {
+		if i == 0 {
+			log.Infof("源目录:   %s", s.Path)
+		} else {
+			log.Infof("          %s", s.Path)
 		}
 	}
 	log.Infof("媒体库:   %s", cfg.Transfer.MediaDir)
@@ -94,7 +92,11 @@ func main() {
 		state = &State{path: cfg.StateFile, data: map[string]Record{}}
 	}
 
-	app := &App{cfg: cfg, log: log, tmdb: tmdb, state: state, dryRun: *dryRun, parseOnly: *parseOnly}
+	app := &App{
+		cfg: cfg, log: log, tmdb: tmdb, state: state,
+		dryRun: *dryRun, parseOnly: *parseOnly,
+		nfoDone: map[string]bool{},
+	}
 
 	// 首次立即扫描
 	app.scanAll()
@@ -166,6 +168,8 @@ type App struct {
 	state     *State
 	dryRun    bool
 	parseOnly bool
+	// 已写过 tvshow.nfo 的剧集目录：同一部剧的多集不必每集都重写一遍
+	nfoDone map[string]bool
 }
 
 type stats struct {
@@ -180,9 +184,12 @@ func (a *App) scanAll() {
 	var total stats
 
 	for _, src := range a.cfg.Sources {
-		files, err := collectVideoFiles(src)
+		files, err := collectVideoFiles(src, a.cfg.Transfer.MediaDir)
 		if err != nil {
 			a.log.Errorf("扫描 %s 失败: %v", src.Path, err)
+			continue
+		}
+		if len(files) == 0 {
 			continue
 		}
 		a.log.Infof("发现 %d 个视频文件: %s", len(files), src.Path)
@@ -196,6 +203,10 @@ func (a *App) scanAll() {
 		}
 	}
 
+	if total.total == 0 {
+		a.log.Infof("没有发现新的视频文件")
+		return
+	}
 	a.log.Infof("本轮完成：共 %d，成功 %d，跳过 %d，失败 %d，耗时 %.1fs",
 		total.total, total.processed, total.skipped, total.failed, time.Since(start).Seconds())
 }
@@ -204,14 +215,14 @@ func (a *App) handleFile(src SourceConfig, path string, idx, total int) stats {
 	var st stats
 
 	name := filepath.Base(path)
-	a.log.Infof("[%d/%d] %s", idx, total, name)
 
-	// 已处理过
+	// 已处理过（大媒体库重复扫描时不再刷屏，只在 debug 里留痕）
 	if a.state.Done(path) {
-		a.log.Debugf("已处理过，跳过")
+		a.log.Debugf("已处理过，跳过: %s", name)
 		st.skipped = 1
 		return st
 	}
+	a.log.Infof("[%d/%d] %s", idx, total, name)
 
 	info, err := os.Stat(path)
 	if err != nil {
@@ -221,16 +232,14 @@ func (a *App) handleFile(src SourceConfig, path string, idx, total int) stats {
 	}
 
 	// 体积过滤（排除广告、样片）
-	minSize := a.cfg.Transfer.MinSizeMB * 1024 * 1024
-	if !a.parseOnly && minSize > 0 && info.Size() < minSize {
+	if minSize := a.cfg.Transfer.MinSizeMB * 1024 * 1024; !a.parseOnly && minSize > 0 && info.Size() < minSize {
 		a.log.Debugf("体积 %.1fMB 小于阈值，跳过", float64(info.Size())/1024/1024)
 		st.skipped = 1
 		return st
 	}
 
 	// 正在写入的文件先不动
-	stable := time.Duration(a.cfg.Watch.StableSeconds) * time.Second
-	if !a.parseOnly && stable > 0 && time.Since(info.ModTime()) < stable {
+	if stable := time.Duration(a.cfg.Watch.StableSeconds) * time.Second; !a.parseOnly && stable > 0 && time.Since(info.ModTime()) < stable {
 		a.log.Infof("文件仍在变化（%s 内修改过），本轮跳过", stable)
 		st.skipped = 1
 		return st
@@ -238,16 +247,8 @@ func (a *App) handleFile(src SourceConfig, path string, idx, total int) stats {
 
 	// 解析文件名
 	p := ParseFileName(name)
-	if src.Type == "movie" {
-		p.Kind = KindMovie
-	} else if src.Type == "tv" && p.Kind == KindMovie {
-		p.Kind = KindTV
-		if p.Season == 0 {
-			p.Season = 1
-		}
-	}
-	// type: anime 不改变电影/剧集判定，只影响最终进哪个目录
-	a.log.Infof("  解析: %s", p.String())
+	applySourceType(src.Type, p)
+	a.log.Infof("  解析: %s", p)
 
 	if p.Title == "" {
 		a.log.Warnf("  无法从文件名解析出标题，跳过")
@@ -257,13 +258,15 @@ func (a *App) handleFile(src SourceConfig, path string, idx, total int) stats {
 
 	// parse-only：打印识别结果与预估目标，到此为止
 	if a.parseOnly {
-		anime := p.Kind == KindTV && a.animeByHint(src.Type, p)
-		m := &MediaInfo{Kind: p.Kind, Title: p.Title, OriginalTitle: p.Title, Year: p.Year, Anime: anime}
-		if dir, file, err := targetPaths(p, m, a.cfg); err == nil {
-			if anime {
+		m := &MediaInfo{
+			Kind: p.Kind, Title: p.Title, OriginalTitle: p.Title,
+			Year: p.Year, Anime: p.Kind == KindTV && decideAnime(src.Type, p.AnimeHint, nil),
+		}
+		if tp, err := targetPaths(p, m, a.cfg); err == nil {
+			if m.Anime {
 				a.log.Infof("  归类: 动漫（按文件名特征判断，正式跑会以 TMDB 类型复核）")
 			}
-			a.log.Infof("  预估目标: %s", filepath.Join(dir, file))
+			a.log.Infof("  预估目标: %s", tp.Name())
 		}
 		st.processed = 1
 		return st
@@ -285,27 +288,28 @@ func (a *App) handleFile(src SourceConfig, path string, idx, total int) stats {
 	}
 	a.log.Infof("  TMDB: %s (%d) id=%d", sr.Title, sr.Year, sr.ID)
 
+	// 详情只拉一次，dry-run 和正式流程共用
+	d, err := a.loadDetail(src.Type, p, sr.ID)
+	if err != nil {
+		a.log.Errorf("  %v", err)
+		st.failed = 1
+		return st
+	}
+	a.log.Infof("  归类: %s", kindLabel(d.m))
+
 	if a.dryRun {
-		m, err := a.buildMediaInfo(src.Type, p, sr.ID)
-		if err != nil {
-			a.log.Errorf("  %v", err)
-			st.failed = 1
-			return st
-		}
-		dir, file, err := targetPaths(p, m, a.cfg)
+		tp, err := targetPaths(p, d.m, a.cfg)
 		if err != nil {
 			a.log.Errorf("  计算目标路径失败: %v", err)
 			st.failed = 1
 			return st
 		}
-		a.log.Infof("  归类: %s", kindLabel(m))
-		a.log.Infof("  目标: %s", filepath.Join(dir, file))
+		a.log.Infof("  目标: %s", tp.Name())
 		st.processed = 1
 		return st
 	}
 
-	// 按类型抓详情并整理
-	dst, err := a.handleItem(src.Type, path, p, sr.ID)
+	dst, err := a.apply(path, p, d)
 	if err != nil {
 		a.log.Errorf("  整理失败: %v", err)
 		st.failed = 1
@@ -326,108 +330,120 @@ func (a *App) handleFile(src SourceConfig, path string, idx, total int) stats {
 	return st
 }
 
-// buildMediaInfo 查详情并组装 MediaInfo，dry-run 与正式流程共用同一套判定
-func (a *App) buildMediaInfo(srcType string, p *ParsedMedia, tmdbID int) (*MediaInfo, error) {
+// detail TMDB 详情。电影只填 movie，剧集只填 tv，m 是两者共用的归类信息
+type detail struct {
+	m     *MediaInfo
+	movie *MovieDetail
+	tv    *TVDetail
+}
+
+// loadDetail 按类型拉一次详情并组装归类信息
+func (a *App) loadDetail(srcType string, p *ParsedMedia, tmdbID int) (*detail, error) {
 	if p.Kind == KindMovie {
 		d, err := a.tmdb.Movie(tmdbID)
 		if err != nil {
 			return nil, fmt.Errorf("获取电影详情失败: %w", err)
 		}
-		return &MediaInfo{
-			Kind:          KindMovie,
-			Title:         d.Title,
-			OriginalTitle: d.OriginalTitle,
-			Year:          d.Year,
-			TMDBID:        d.ID,
-			// 动画电影也按电影处理，不进 Anime 目录
-			Anime: false,
+		return &detail{
+			m: &MediaInfo{
+				Kind:          KindMovie,
+				Title:         d.Title,
+				OriginalTitle: d.OriginalTitle,
+				Year:          d.Year,
+				TMDBID:        d.ID,
+				// 动画电影也按电影处理，不进 Anime 目录
+				Anime: false,
+			},
+			movie: d,
 		}, nil
 	}
+
 	d, err := a.tmdb.TV(tmdbID)
 	if err != nil {
 		return nil, fmt.Errorf("获取剧集详情失败: %w", err)
 	}
-	return &MediaInfo{
-		Kind:          KindTV,
-		Title:         d.Name,
-		OriginalTitle: d.OriginalName,
-		Year:          d.Year,
-		TMDBID:        d.ID,
-		Anime:         decideAnime(srcType, p.AnimeHint, d.Genres),
+	return &detail{
+		m: &MediaInfo{
+			Kind:          KindTV,
+			Title:         d.Name,
+			OriginalTitle: d.OriginalName,
+			Year:          d.Year,
+			TMDBID:        d.ID,
+			Anime:         decideAnime(srcType, p.AnimeHint, d.Genres),
+		},
+		tv: d,
 	}, nil
 }
 
-// handleItem 抓详情 -> 判断类型 -> 转移 -> 写 NFO/图片
-func (a *App) handleItem(srcType, path string, p *ParsedMedia, tmdbID int) (string, error) {
-	m, err := a.buildMediaInfo(srcType, p, tmdbID)
+// apply 转移文件并写 NFO / 图片
+func (a *App) apply(src string, p *ParsedMedia, d *detail) (string, error) {
+	tp, err := targetPaths(p, d.m, a.cfg)
 	if err != nil {
 		return "", err
 	}
-	a.log.Infof("  归类: %s", kindLabel(m))
+	dst, err := Transfer(src, tp, a.cfg, a.log)
+	if err != nil {
+		return "", err
+	}
 
-	if p.Kind == KindMovie {
-		d, err := a.tmdb.Movie(tmdbID)
-		if err != nil {
-			return "", fmt.Errorf("获取电影详情失败: %w", err)
-		}
-		dst, err := Transfer(path, p, m, a.cfg, a.log)
-		if err != nil {
-			return "", err
-		}
-		dir := filepath.Dir(dst)
+	if d.movie != nil {
 		if a.cfg.Transfer.WriteMovieNFO {
-			if err := WriteMovieNFO(dir, d, a.log); err != nil {
+			if err := WriteMovieNFO(tp.Show, d.movie, a.log); err != nil {
 				a.log.Warnf("  %v", err)
 			}
 		}
 		if a.cfg.Transfer.DownloadImages {
-			a.saveImage(d.PosterPath, filepath.Join(dir, "poster.jpg"))
-			a.saveImage(d.BackdropPath, filepath.Join(dir, "fanart.jpg"))
+			a.saveImage(d.movie.PosterPath, filepath.Join(tp.Show, "poster.jpg"))
+			a.saveImage(d.movie.BackdropPath, filepath.Join(tp.Show, "fanart.jpg"))
 		}
 		return dst, nil
 	}
 
-	d, err := a.tmdb.TV(tmdbID)
-	if err != nil {
-		return "", fmt.Errorf("获取剧集详情失败: %w", err)
-	}
-	dst, err := Transfer(path, p, m, a.cfg, a.log)
-	if err != nil {
-		return "", err
-	}
-
-	seasonDir := filepath.Dir(dst)
-	showDir := filepath.Dir(seasonDir)
-
-	if a.cfg.Transfer.WriteTVNFO {
-		if err := WriteTVShowNFO(showDir, d, a.log); err != nil {
+	// 剧集：NFO 和海报放在剧集目录（Season 的上一层），同一部剧只写一次
+	if a.cfg.Transfer.WriteTVNFO && !a.nfoDone[tp.Show] {
+		if err := WriteTVShowNFO(tp.Show, d.tv, a.log); err != nil {
 			a.log.Warnf("  %v", err)
+		} else {
+			a.nfoDone[tp.Show] = true
 		}
 	}
 	if a.cfg.Transfer.DownloadImages {
-		a.saveImage(d.PosterPath, filepath.Join(showDir, "poster.jpg"))
-		a.saveImage(d.BackdropPath, filepath.Join(showDir, "fanart.jpg"))
+		a.saveImage(d.tv.PosterPath, filepath.Join(tp.Show, "poster.jpg"))
+		a.saveImage(d.tv.BackdropPath, filepath.Join(tp.Show, "fanart.jpg"))
 	}
 
 	if a.cfg.Transfer.WriteEpisodeNFO {
-		ep, err := a.tmdb.Episode(d.ID, p.Season, p.Episode)
+		ep, err := a.tmdb.Episode(d.tv.ID, p.Season, p.Episode)
 		if err != nil {
 			a.log.Warnf("  获取第 %d 集信息失败: %v", p.Episode, err)
-		} else {
-			if err := WriteEpisodeNFO(dst, ep, d.Name, p.Season, p.Episode); err != nil {
-				a.log.Warnf("  %v", err)
-			}
-			if ep.StillPath != "" {
-				a.saveImage(ep.StillPath, strings.TrimSuffix(dst, filepath.Ext(dst))+"-thumb.jpg")
-			}
+			return dst, nil
+		}
+		thumb := ""
+		if ep.StillPath != "" {
+			thumb = strings.TrimSuffix(filepath.Base(dst), filepath.Ext(dst)) + "-thumb.jpg"
+			a.saveImage(ep.StillPath, filepath.Join(tp.Dir, thumb))
+		}
+		if err := WriteEpisodeNFO(dst, ep, d.tv.Name, p.Season, p.Episode, thumb); err != nil {
+			a.log.Warnf("  %v", err)
 		}
 	}
 	return dst, nil
 }
 
-// animeByHint 不联网时的动漫判断（parse-only 预览用）
-func (a *App) animeByHint(srcType string, p *ParsedMedia) bool {
-	return decideAnime(srcType, p.AnimeHint, nil)
+// applySourceType 源目录强制指定的类型优先于文件名推断
+func applySourceType(t string, p *ParsedMedia) {
+	switch t {
+	case "movie":
+		p.Kind = KindMovie
+		p.Season, p.Episode = 0, 0
+	case "tv", "anime":
+		if p.Kind == KindMovie {
+			p.Kind = KindTV
+		}
+		if p.Season == 0 {
+			p.Season = 1
+		}
+	}
 }
 
 // decideAnime 剧集是否归入 Anime 目录。电影不调用这个函数（动画电影按电影处理）。
@@ -478,8 +494,9 @@ func (a *App) saveImage(imagePath, dest string) {
 	}
 }
 
-// collectVideoFiles 收集源目录下的视频文件
-func collectVideoFiles(src SourceConfig) ([]string, error) {
+// collectVideoFiles 收集源目录下的视频文件。exclude 是媒体库目录，
+// 万一媒体库建在源目录里面，也不会把自己整理过的文件再扫一遍。
+func collectVideoFiles(src SourceConfig, exclude string) ([]string, error) {
 	var files []string
 
 	skipDir := func(name string) bool {
@@ -488,6 +505,15 @@ func collectVideoFiles(src SourceConfig) ([]string, error) {
 			low == "$recycle.bin" || low == "system volume information" ||
 			strings.HasPrefix(low, ".trash")
 	}
+	accept := func(path, name string) bool {
+		if exclude != "" && isUnder(path, exclude) {
+			return false
+		}
+		if strings.HasPrefix(name, ".") {
+			return false
+		}
+		return isVideoFile(name) && !isSample(name)
+	}
 
 	if !src.recursive() {
 		entries, err := os.ReadDir(src.Path)
@@ -495,13 +521,12 @@ func collectVideoFiles(src SourceConfig) ([]string, error) {
 			return nil, err
 		}
 		for _, e := range entries {
-			if e.IsDir() || skipDir(e.Name()) {
+			if e.IsDir() {
 				continue
 			}
-			if !isVideoFile(e.Name()) || isSample(e.Name()) {
-				continue
+			if path := filepath.Join(src.Path, e.Name()); accept(path, e.Name()) {
+				files = append(files, path)
 			}
-			files = append(files, filepath.Join(src.Path, e.Name()))
 		}
 		return files, nil
 	}
@@ -511,33 +536,30 @@ func collectVideoFiles(src SourceConfig) ([]string, error) {
 			return nil // 单个目录不可读时继续
 		}
 		if d.IsDir() {
-			if path != src.Path && skipDir(d.Name()) {
+			if path != src.Path && (skipDir(d.Name()) || (exclude != "" && isUnder(path, exclude))) {
 				return filepath.SkipDir
 			}
 			return nil
 		}
-		name := d.Name()
-		if strings.HasPrefix(name, ".") {
-			return nil
+		if accept(path, d.Name()) {
+			files = append(files, path)
 		}
-		if !isVideoFile(name) || isSample(name) {
-			return nil
-		}
-		files = append(files, path)
 		return nil
 	})
 	return files, err
+}
+
+// isUnder 判断 path 是否在 dir 之内（dir 自身也算）
+func isUnder(path, dir string) bool {
+	rel, err := filepath.Rel(dir, path)
+	if err != nil {
+		return false
+	}
+	return rel == "." || (rel != ".." && !strings.HasPrefix(rel, ".."+string(filepath.Separator)))
 }
 
 var reSample = regexp.MustCompile(`(?i)(?:^|[\s._\-\[\(])sample(?:[\s._\-\]\),]|$)`)
 
 func isSample(name string) bool {
 	return reSample.MatchString(strings.TrimSuffix(name, filepath.Ext(name)))
-}
-
-func orDash(s string) string {
-	if s == "" {
-		return "-"
-	}
-	return s
 }
