@@ -14,7 +14,7 @@ import (
 )
 
 // TMDB 的 API 域名。国内 api.themoviedb.org 常被 DNS 污染（解析到 Facebook 的 IP），
-// 而 api.tmdb.org 走 CloudFront，实测可直连，所以用它。
+// 而 api.tmdb.org 走 CloudFront，实测可直连，所以固定用它，不做配置项。
 // 注意：nas-tools 里的 tmdb.nastool.cn 已域名失效，tmdb.nastool.workers.dev 也被污染。
 const defaultTMDBAPI = "https://api.tmdb.org/3"
 
@@ -130,20 +130,11 @@ func NewTMDB(cfg TMDBConfig) (*TMDB, error) {
 		// 连接阶段单独限时：连不上时快速失败，不要每个文件都卡 20 秒
 		DialContext: (&net.Dialer{Timeout: 8 * time.Second, KeepAlive: 30 * time.Second}).DialContext,
 	}
-	// 用户填了 base_url 就用它，否则用默认的 api.tmdb.org
-	base := strings.TrimRight(strings.TrimSpace(cfg.BaseURL), "/")
-	if base == "" {
-		base = defaultTMDBAPI
-	}
-	imageBase := strings.TrimRight(strings.TrimSpace(cfg.ImageBase), "/")
-	if imageBase == "" {
-		imageBase = tmdbImageBase
-	}
 	return &TMDB{
 		apiKey:    strings.TrimSpace(cfg.APIKey),
 		lang:      cfg.Language,
-		baseURL:   base,
-		imageBase: imageBase,
+		baseURL:   defaultTMDBAPI,
+		imageBase: tmdbImageBase,
 		client:    &http.Client{Timeout: 30 * time.Second, Transport: transport},
 		limiter:   time.NewTicker(time.Second / time.Duration(qps)),
 		movies:    map[int]*MovieDetail{},
@@ -274,12 +265,41 @@ func (t *TMDB) Search(kind MediaKind, title string, year int) (*SearchResult, er
 		return nil, fmt.Errorf("TMDB 未找到「%s」", title)
 	}
 
-	// 优先选标题完全一致的结果，否则用第一条（TMDB 已按相关度排序）
+	// 打分挑选：标题（含原名）完全一致 > 年份吻合 > 热度高
+	// 直接取 results[0] 会选到衍生剧/短片（例如 Sword Art Online 的 Sword Art Offline），
+	// 而文件名没年份时又只能靠热度兜底，所以两项都要比。
 	best := raw.Results[0]
+	bestScore := -1.0
+	want := strings.TrimSpace(title)
 	for _, it := range raw.Results {
-		if strings.EqualFold(strings.TrimSpace(firstNonEmpty(it.Title, it.Name)), strings.TrimSpace(title)) {
-			best = it
-			break
+		name := strings.TrimSpace(firstNonEmpty(it.Title, it.Name))
+		orig := strings.TrimSpace(firstNonEmpty(it.OriginalTitle, it.OriginalName))
+		score := 0.0
+		if want != "" && (strings.EqualFold(name, want) || strings.EqualFold(orig, want)) {
+			score += 100
+		}
+		gotYear := 0
+		if d := firstNonEmpty(it.ReleaseDate, it.FirstAirDate); len(d) >= 4 {
+			gotYear, _ = strconv.Atoi(d[:4])
+		}
+		if year > 0 && gotYear > 0 {
+			switch {
+			case gotYear == year:
+				score += 50
+			case gotYear == year-1 || gotYear == year+1:
+				score += 20
+			}
+		}
+		// 热度只做同级细分，最多 10 分，压不过标题与年份
+		if it.Popularity > 0 {
+			p := it.Popularity
+			if p > 1000 {
+				p = 1000
+			}
+			score += p / 100
+		}
+		if score > bestScore {
+			best, bestScore = it, score
 		}
 	}
 

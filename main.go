@@ -17,7 +17,7 @@ var appVersion = "0.1.0"
 
 func main() {
 	var (
-		configPath = flag.String("config", "config.yaml", "配置文件路径")
+		configPath = flag.String("config", "", "配置文件路径，默认用 exe 同目录的 config.yaml")
 		once       = flag.Bool("once", false, "只扫描一次后退出")
 		dryRun     = flag.Bool("dry-run", false, "只打印将要执行的操作，不实际写入")
 		interval   = flag.Int("interval", 0, "扫描间隔（秒），覆盖配置里的 watch.interval")
@@ -31,10 +31,20 @@ func main() {
 		return
 	}
 
-	cfg, err := LoadConfig(*configPath, !*parseOnly)
+	// 双击运行（没有任何命令行参数）时，退出前停一下，避免窗口一闪就关
+	waitOnExit := len(os.Args) == 1
+
+	cfgFile := *configPath
+	if cfgFile == "" {
+		cfgFile = findConfigFile()
+		if cfgFile == "" {
+			fatal(waitOnExit, "找不到 config.yaml。\n请把 config.yaml 放在 medialinker.exe 同一个文件夹里。")
+		}
+	}
+
+	cfg, err := LoadConfig(cfgFile, !*parseOnly)
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "配置错误: %v\n", err)
-		os.Exit(1)
+		fatal(waitOnExit, "配置错误: %v\n配置文件: %s", err, cfgFile)
 	}
 	if *interval > 0 {
 		cfg.Watch.Interval = *interval
@@ -42,11 +52,21 @@ func main() {
 
 	log := NewLogger(cfg.LogLevel)
 	log.Infof("media-linker %s 启动", appVersion)
-	log.Infof("媒体库: %s", cfg.Transfer.MediaDir)
+	log.Infof("配置文件: %s", cfgFile)
+	if len(cfg.Sources) > 0 {
+		for i, s := range cfg.Sources {
+			if i == 0 {
+				log.Infof("源目录:   %s", s.Path)
+			} else {
+				log.Infof("          %s", s.Path)
+			}
+		}
+	}
+	log.Infof("媒体库:   %s", cfg.Transfer.MediaDir)
 	log.Infof("  ├─ 电影   %s", cfg.Transfer.MovieRoot())
 	log.Infof("  ├─ 电视剧 %s", cfg.Transfer.TVRoot())
 	log.Infof("  └─ 动漫   %s", cfg.Transfer.AnimeRoot())
-	log.Infof("整理模式: %s | 源目录: %d 个 | 扫描间隔: %ds", cfg.Transfer.Mode, len(cfg.Sources), cfg.Watch.Interval)
+	log.Infof("整理模式: %s | 扫描间隔: %ds", cfg.Transfer.Mode, cfg.Watch.Interval)
 	if *dryRun {
 		log.Warnf("dry-run 模式：不会写入任何文件")
 	}
@@ -56,17 +76,14 @@ func main() {
 
 	tmdb, err := NewTMDB(cfg.TMDB)
 	if err != nil {
-		log.Errorf("初始化 TMDB 失败: %v", err)
-		os.Exit(1)
+		fatal(waitOnExit, "初始化 TMDB 失败: %v", err)
 	}
 
 	// 先探连通性：连不上就直接报错退出，别让每个文件都白等一次超时
 	if !*parseOnly {
 		if err := tmdb.Ping(); err != nil {
-			log.Errorf("TMDB 连不上: %v", err)
-			log.Errorf("默认域名是 %s（国内 api.themoviedb.org 被污染，不要用它）", defaultTMDBAPI)
-			log.Errorf("如确实访问不了，可在 config.yaml 的 tmdb.base_url 换成你自己能访问的镜像")
-			os.Exit(1)
+			fatal(waitOnExit, "TMDB 连不上: %v\n默认域名是 %s，请确认这段网络能访问它（浏览器打开 https://api.tmdb.org/3/configuration 应返回 JSON）。",
+				err, defaultTMDBAPI)
 		}
 		log.Infof("TMDB 连接正常，使用域名 %s", tmdb.BaseURL())
 	}
@@ -84,6 +101,9 @@ func main() {
 
 	if *once || !cfg.Watch.Enabled {
 		log.Infof("扫描完成，退出")
+		if waitOnExit {
+			pause("\n按回车键关闭窗口...")
+		}
 		return
 	}
 
@@ -100,9 +120,42 @@ func main() {
 			app.scanAll()
 		case <-sig:
 			log.Infof("收到退出信号，停止扫描")
+			if waitOnExit {
+				pause("\n按回车键关闭窗口...")
+			}
 			return
 		}
 	}
+}
+
+// findConfigFile 找配置文件：优先 exe 同目录（双击运行的情况），其次当前目录
+func findConfigFile() string {
+	if exe, err := os.Executable(); err == nil {
+		p := filepath.Join(filepath.Dir(exe), "config.yaml")
+		if _, err := os.Stat(p); err == nil {
+			return p
+		}
+	}
+	if _, err := os.Stat("config.yaml"); err == nil {
+		return "config.yaml"
+	}
+	return ""
+}
+
+// pause 等一次回车，防止双击运行时窗口一闪就关
+func pause(prompt string) {
+	fmt.Fprint(os.Stdout, prompt)
+	var s string
+	fmt.Fscanln(os.Stdin, &s)
+}
+
+// fatal 打印错误后退出。wait 为 true（双击运行）时先停一下，让人看到错误信息
+func fatal(wait bool, format string, args ...any) {
+	fmt.Fprintf(os.Stderr, "\n"+format+"\n", args...)
+	if wait {
+		pause("\n按回车键关闭窗口...")
+	}
+	os.Exit(1)
 }
 
 // App 运行上下文
@@ -204,7 +257,7 @@ func (a *App) handleFile(src SourceConfig, path string, idx, total int) stats {
 
 	// parse-only：打印识别结果与预估目标，到此为止
 	if a.parseOnly {
-		anime := a.animeByHint(src.Type, p)
+		anime := p.Kind == KindTV && a.animeByHint(src.Type, p)
 		m := &MediaInfo{Kind: p.Kind, Title: p.Title, OriginalTitle: p.Title, Year: p.Year, Anime: anime}
 		if dir, file, err := targetPaths(p, m, a.cfg); err == nil {
 			if anime {
@@ -286,7 +339,8 @@ func (a *App) buildMediaInfo(srcType string, p *ParsedMedia, tmdbID int) (*Media
 			OriginalTitle: d.OriginalTitle,
 			Year:          d.Year,
 			TMDBID:        d.ID,
-			Anime:         decideAnime(srcType, p.AnimeHint, d.Genres),
+			// 动画电影也按电影处理，不进 Anime 目录
+			Anime: false,
 		}, nil
 	}
 	d, err := a.tmdb.TV(tmdbID)
@@ -376,7 +430,7 @@ func (a *App) animeByHint(srcType string, p *ParsedMedia) bool {
 	return decideAnime(srcType, p.AnimeHint, nil)
 }
 
-// decideAnime 动漫归类的唯一判定入口。
+// decideAnime 剧集是否归入 Anime 目录。电影不调用这个函数（动画电影按电影处理）。
 // 优先级：源目录显式指定 anime > TMDB 类型里有动画 > 文件名特征（仅在拿不到类型时兜底）。
 func decideAnime(srcType string, hint bool, genres []string) bool {
 	if strings.EqualFold(srcType, "anime") {
@@ -403,14 +457,11 @@ func isAnimationGenre(g string) bool {
 }
 
 func kindLabel(m *MediaInfo) string {
-	if m.Anime {
-		if m.Kind == KindMovie {
-			return "动漫电影"
-		}
-		return "动漫"
-	}
 	if m.Kind == KindMovie {
 		return "电影"
+	}
+	if m.Anime {
+		return "动漫"
 	}
 	return "电视剧"
 }

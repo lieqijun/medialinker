@@ -11,22 +11,19 @@ import (
 
 // Config 全局配置
 type Config struct {
-	TMDB     TMDBConfig     `yaml:"tmdb"`
-	Transfer TransferConfig `yaml:"transfer"`
-	Sources  []SourceConfig `yaml:"sources"`
-	Watch    WatchConfig    `yaml:"watch"`
-	StateFile string        `yaml:"state_file"`
-	LogLevel string         `yaml:"log_level"`
+	TMDB      TMDBConfig     `yaml:"tmdb"`
+	Sources   []SourceConfig `yaml:"sources"`
+	Transfer  TransferConfig `yaml:"transfer"`
+	Watch     WatchConfig    `yaml:"watch"`
+	StateFile string         `yaml:"state_file"`
+	LogLevel  string         `yaml:"log_level"`
 }
 
 // TMDBConfig TMDB API 配置
+// 接口域名与图片域名固定内置（api.tmdb.org 国内可直连），不再提供配置项
 type TMDBConfig struct {
 	APIKey   string `yaml:"api_key"`
 	Language string `yaml:"language"`
-	// BaseURL 留空即用默认的 https://api.tmdb.org/3；只有自己有反代时才需要改
-	BaseURL string `yaml:"base_url"`
-	// ImageBase 图片地址，默认 https://image.tmdb.org/t/p/original
-	ImageBase string `yaml:"image_base"`
 	// 每次请求间隔，避免触发限流
 	QPS int `yaml:"qps"`
 }
@@ -88,9 +85,8 @@ type WatchConfig struct {
 func DefaultConfig() *Config {
 	return &Config{
 		TMDB: TMDBConfig{
-			Language:  "zh-CN",
-			QPS:       4,
-			ImageBase: "https://image.tmdb.org/t/p/original",
+			Language: "zh-CN",
+			QPS:      4,
 		},
 		Transfer: TransferConfig{
 			Mode:            "hardlink",
@@ -133,6 +129,10 @@ func LoadConfig(path string, requireAPI bool) (*Config, error) {
 
 	if err := cfg.validate(requireAPI); err != nil {
 		return nil, err
+	}
+	// state_file 写成相对路径时，以配置文件所在目录为基准（双击运行时不会乱落到别处）
+	if cfg.StateFile != "" && !filepath.IsAbs(cfg.StateFile) {
+		cfg.StateFile = filepath.Join(filepath.Dir(path), cfg.StateFile)
 	}
 	return cfg, nil
 }
@@ -201,12 +201,6 @@ func (c *Config) validate(requireAPI bool) error {
 	if c.TMDB.Language == "" {
 		c.TMDB.Language = "zh-CN"
 	}
-	// base_url 留空就用内置默认域名
-	if c.TMDB.ImageBase == "" {
-		c.TMDB.ImageBase = "https://image.tmdb.org/t/p/original"
-	}
-	c.TMDB.BaseURL = strings.TrimRight(strings.TrimSpace(c.TMDB.BaseURL), "/")
-	c.TMDB.ImageBase = strings.TrimRight(strings.TrimSpace(c.TMDB.ImageBase), "/")
 	return nil
 }
 

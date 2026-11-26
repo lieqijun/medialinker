@@ -17,14 +17,12 @@ Go 编写，单文件可执行，内存占用通常几十 MB。
 
 ## 下载
 
-到 [Releases](../../releases) 下载 `medialinker-windows-amd64.zip`，解压后是四个文件：
+到 [Releases](../../releases) 下载 `medialinker-windows-amd64.zip`，解压后只有两个文件：
 
 | 文件 | 用途 |
 |---|---|
-| `medialinker.exe` | 主程序 |
+| `medialinker.exe` | 主程序，**双击运行** |
 | `config.yaml` | 配置文件，改三处就能用 |
-| `run.bat` | 双击启动 |
-| `run-dryrun.bat` | 双击试运行（只查 TMDB、只打印目标路径，不写文件） |
 
 只发布 Windows x86_64 版本。
 
@@ -37,48 +35,61 @@ Go 编写，单文件可执行，内存占用通常几十 MB。
 ```yaml
 tmdb:
   api_key: "你的 TMDB Key"      # 到 https://www.themoviedb.org/settings/api 申请
-transfer:
-  media_dir: "D:/Media"        # 媒体库根目录，只填到 media 这层
 sources:
   - path: "D:/Downloads"       # 你的下载目录，一个就够
     type: ""                   # 留空 = 自动分类
+transfer:
+  media_dir: "D:/Media"        # 媒体库根目录，只填到 media 这层
 ```
+
+源目录和输出目录是挨着的两段，一起配完即可。
 
 `media_dir` 不用自己建子目录，程序启动时会自动创建 `Movies`、`TVShows`、`Anime` 三个。
 
-`type` 留空即可：程序先按文件名判断是电影还是剧集，查到 TMDB 后如果类型含「动画」就进 `Anime`，否则进 `Movies` 或 `TVShows`。也就是说**一个下载目录就能自动分成三类**，不需要预先分好。
+`type` 留空即可：程序先按文件名判断是电影还是剧集，查到 TMDB 后如果**剧集**的类型含「动画」就进 `Anime`，否则进 `TVShows`；**电影一律进 `Movies`**，动画电影也算电影。也就是说**一个下载目录就能自动分成三类**，不需要预先分好。
 
-**2. 双击 `run-dryrun.bat` 先看结果**
+**2. 双击 `medialinker.exe`**
 
-会联网查 TMDB 并打印每个文件将要放到的位置，一个字节都不写。第一次务必先跑这个。
+就这么简单，它会自己找同目录的 `config.yaml`。
 
-**3. 确认无误后双击 `run.bat`**
+第一次建议先只看结果、不写文件 —— 在文件夹地址栏输入 `cmd` 回车打开命令行，然后：
+
+```bash
+medialinker.exe -dry-run -once
+```
+
+它会联网查 TMDB 并打印每个文件将要放到的位置，一个字节都不写。确认路径都对，再双击 `medialinker.exe` 正式跑。
 
 黑窗口不要关，最小化即可。默认每 300 秒扫一次，Ctrl+C 停止。
 
-也可以在命令行里跑：
+**3. 跑起来之后**
 
-```bash
-# 只看识别结果，不联网（连 API Key 都不用填）
-medialinker.exe -config config.yaml -parse-only -once
+窗口里会实时打印每个文件的过程：
 
-# 连 TMDB 但不写文件
-medialinker.exe -config config.yaml -once -dry-run
-
-# 正式跑
-medialinker.exe -config config.yaml
 ```
+media-linker v0.1.7 启动
+配置文件: D:\medialinker\config.yaml
+源目录:   D:\Downloads
+媒体库:   D:\Media
+  ├─ 电影   D:\Media\Movies
+  ├─ 电视剧 D:\Media\TVShows
+  └─ 动漫   D:\Media\Anime
+```
+
+出错时窗口也会停住等你按回车，不会一闪就消失。
 
 ## 命令参数
 
 | 参数 | 作用 |
 |---|---|
-| `-config <路径>` | 配置文件，默认 `config.yaml` |
+| `-config <路径>` | 配置文件，默认用 exe 同目录的 `config.yaml` |
 | `-once` | 只扫一次就退出 |
 | `-dry-run` | 只打印，不写文件 |
 | `-parse-only` | 只解析文件名并打印识别结果，不联网、不写文件（没填 API Key 也能跑） |
 | `-interval <秒>` | 覆盖配置里的扫描间隔 |
 | `-version` | 打印版本 |
+
+不带任何参数双击运行时，程序在退出前会停住等回车（只在双击这种方式下），方便看错误信息。
 
 ## 关于硬链接
 
@@ -114,14 +125,16 @@ Some.Show.S02E05.MKV        ->  Some Show - S02E05.MKV     （原样保留大小
 
 程序会先摘掉模板渲染出来的视频后缀，再把源后缀拼回去，所以不会出现无后缀或 `name.mkv.mkv`。
 
-**目录**：`media_dir` 下固定三个子目录，按 TMDB 类型自动分流。
+**目录**：`media_dir` 下固定三个子目录，按类型自动分流。
 
 | 判定 | 目标目录 | 模板 |
 |---|---|---|
-| 电影，类型里没有「动画」 | `<media_dir>/Movies` | `movie_*` |
+| 电影（含动画电影） | `<media_dir>/Movies` | `movie_*` |
 | 剧集，类型里没有「动画」 | `<media_dir>/TVShows` | `tv_*` |
-| 电影/剧集，类型里有「动画」 | `<media_dir>/Anime` | `anime_*`，留空则沿用 `movie_*` / `tv_*` |
-| 源目录写了 `type: anime` | 强制 `Anime` | 同上 |
+| 剧集，类型里有「动画」 | `<media_dir>/Anime` | `anime_*`，留空则沿用 `tv_*` |
+| 源目录写了 `type: anime` 且是剧集 | 强制 `Anime` | 同上 |
+
+**动画电影按电影处理**，进 `Movies`，不建 `Season 01`。只有剧集形态的动画才进 `Anime`。
 
 判定顺序是：源目录显式指定 > TMDB 类型 > 文件名特征。**TMDB 类型是最终依据**，文件名像动漫（字幕组方括号、`[01]` 集数）只用于 `-parse-only` 预览时估算，不会因为名字像就误丢进动漫目录。
 
@@ -129,24 +142,18 @@ Some.Show.S02E05.MKV        ->  Some Show - S02E05.MKV     （原样保留大小
 
 ## 连不上 TMDB 怎么办
 
-程序默认用 `https://api.tmdb.org/3`，**不需要代理**。
+程序的 API 域名固定是 `https://api.tmdb.org/3`，**不需要代理，配置里也没有代理项**。
 
-容易被坑的是另一个官方域名 `api.themoviedb.org`：国内常被 DNS 污染，解析到 `31.13.x.x` 或 `2a03:2880:` 开头（Facebook 的地址段），报错长这样：
-
-```
-请求 TMDB 失败（域名 https://api.themoviedb.org/3）: ... dial tcp [2a03:2880:...]:443 ...
-```
-
-看到这个就说明域名不对，不是网络封了 TMDB。两个官方域名走不同 CDN：
+容易被坑的是另一个官方域名 `api.themoviedb.org`：国内常被 DNS 污染，解析到 `31.13.x.x` 或 `2a03:2880:` 开头（Facebook 的地址段）。两个官方域名走不同 CDN：
 
 | 域名 | 国内实测 |
 |---|---|
-| `api.tmdb.org` | 走 CloudFront，可直连 |
+| `api.tmdb.org` | 走 CloudFront，**可直连**（本程序用这个） |
 | `api.themoviedb.org` | 被污染，解析到 Facebook 的 IP，超时 |
 | `tmdb.nastool.cn` | 域名已失效（NXDOMAIN） |
 | `tmdb.nastool.workers.dev` | 被污染，同样解析到 Facebook 的 IP |
 
-后两个是 nas-tools 里内置的镜像，实测都不能用，所以本程序没有采用。
+后两个是 nas-tools 里内置的镜像，实测都不能用。
 
 自己验一下（把 KEY 换成你的）：
 
@@ -154,12 +161,12 @@ Some.Show.S02E05.MKV        ->  Some Show - S02E05.MKV     （原样保留大小
 curl -s -o nul -w "%{http_code}\n" "https://api.tmdb.org/3/configuration?api_key=你的KEY"
 ```
 
-返回 `200` 说明通。返回 `000` 或超时才需要想别的办法 —— 在 `tmdb.base_url` 填一个你自己能访问的 TMDB 反代即可，镜像地址经常失效，且会把 API Key 经过第三方，安全性自己评估。
+返回 `200` 说明通。返回 `000` 或超时，就是这台机器的网络确实出不去，需要自己在系统层面解决（改 hosts、走路由器代理），程序本身不再提供 `base_url` 配置项。
 
 ## 已知限制
 
 - 只做电影和剧集，不处理音乐、图片
-- 动漫按剧集结构存放（`Season 01/` + `tvshow.nfo`），动画电影按电影结构存放
+- 动画电影按电影存放；只有剧集形态的动画进 `Anime`（`Season 01/` + `tvshow.nfo`）
 - 多集合并的文件（如 `S01E01-E03`）只会取第一个集数
 - 没有 Web 界面，没有自动更新，纯命令行
 

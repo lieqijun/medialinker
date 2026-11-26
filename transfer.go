@@ -77,21 +77,17 @@ func targetPaths(p *ParsedMedia, m *MediaInfo, cfg *Config) (dir, file string, e
 	var rootDir, folderTpl, fileTpl, seasonTpl string
 
 	// 三个根目录都由 media_dir 派生：<media_dir>/Movies | TVShows | Anime
+	// 动画电影按电影处理（进 Movies），只有剧集形态的动画才进 Anime
 	switch {
-	case p.Kind == KindMovie && !m.Anime:
+	case p.Kind == KindMovie:
 		rootDir, folderTpl, fileTpl = tc.MovieRoot(), tc.MovieFolder, tc.MovieFile
-	case p.Kind == KindMovie && m.Anime:
-		// 动画电影：进动漫目录，命名沿用电影模板
-		rootDir = tc.AnimeRoot()
-		folderTpl = firstNonEmpty(tc.AnimeFolder, tc.MovieFolder)
-		fileTpl = firstNonEmpty(tc.AnimeFile, tc.MovieFile)
-	case p.Kind == KindTV && !m.Anime:
-		rootDir, folderTpl, fileTpl = tc.TVRoot(), tc.TVFolder, tc.TVFile
-		seasonTpl = tc.SeasonFolder
-	default: // 剧集形态的动漫
+	case m.Anime:
 		rootDir = tc.AnimeRoot()
 		folderTpl = firstNonEmpty(tc.AnimeFolder, tc.TVFolder)
 		fileTpl = firstNonEmpty(tc.AnimeFile, tc.TVFile)
+		seasonTpl = tc.SeasonFolder
+	default:
+		rootDir, folderTpl, fileTpl = tc.TVRoot(), tc.TVFolder, tc.TVFile
 		seasonTpl = tc.SeasonFolder
 	}
 
