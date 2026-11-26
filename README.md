@@ -119,15 +119,44 @@ Some.Show.S02E05.MKV        ->  Some Show - S02E05.MKV     （原样保留大小
 
 ## 连不上 TMDB 怎么办
 
-国内直连 `api.themoviedb.org` 基本不通，典型报错是：
+先别急，多数情况下**不用代理**。
+
+`api.themoviedb.org` 在国内常被 DNS 污染，典型报错是：
 
 ```
-TMDB 搜索失败: 请求 TMDB 失败: ... dial tcp [2a03:2880:...]:443: connectex: A connection attempt failed ...
+请求 TMDB 失败: ... dial tcp [2a03:2880:...]:443: connectex: A connection attempt failed ...
 ```
 
-`2a03:2880:` 开头或 `31.13.x.x` 这类 IP 是 DNS 污染的结果（那是 Facebook 的地址段），不是 TMDB。三条路：
+`2a03:2880:` 开头或 `31.13.x.x` 这类 IP 是污染结果（那是 Facebook 的地址段），不是 TMDB。
 
-**1. 走本地代理**（最常见）
+**但 TMDB 有两个官方域名，走的是不同 CDN：**
+
+| 域名 | 国内常见情况 |
+|---|---|
+| `api.themoviedb.org` | 常被污染，解析到 Facebook 的 IP，连不通 |
+| `api.tmdb.org` | 走 CloudFront，**多数网络可以直连** |
+
+所以程序默认按下面顺序自动探测，用第一个通的：
+
+```
+api.tmdb.org → api.themoviedb.org → tmdb.nastool.cn → tmdb.nastool.workers.dev
+```
+
+启动日志会打印实际用的是哪个域名：
+
+```
+TMDB 连接正常，使用域名 https://api.tmdb.org/3
+```
+
+先自己验一下 `api.tmdb.org` 通不通（把 KEY 换成你的）：
+
+```bash
+curl -s -o nul -w "%{http_code}\n" "https://api.tmdb.org/3/configuration?api_key=你的KEY"
+```
+
+返回 `200` 就说明能直连，什么都不用配。返回 `000` 或超时，再往下走。
+
+**1. 走本地代理**
 
 ```yaml
 tmdb:
@@ -136,26 +165,20 @@ tmdb:
 
 也可以不写配置，直接设环境变量：`set HTTPS_PROXY=http://127.0.0.1:7890`
 
-先用这条命令确认代理通不通，返回 `401` 就说明连通了（401 是没带 key，正常）：
-
-```bash
-curl -x http://127.0.0.1:7890 -s -o nul -w "%{http_code}\n" https://api.themoviedb.org/3/
-```
-
 **2. 走路由器上的代理**
 
 ```yaml
   proxy: "http://192.168.31.1:7890"
 ```
 
-**3. 用 TMDB 反代镜像**
+**3. 用自己的 TMDB 反代镜像**
 
 ```yaml
   base_url: "https://your-tmdb-mirror.example.com/3"
   image_base: "https://your-tmdb-mirror.example.com/t/p/original"
 ```
 
-镜像地址经常失效，且会把你的 API Key 经过第三方，安全性自己评估。
+填了 `base_url` 就只用这一个域名，不再自动探测。镜像地址经常失效，且会把你的 API Key 经过第三方，安全性自己评估。
 
 ## 已知限制
 
@@ -163,7 +186,7 @@ curl -x http://127.0.0.1:7890 -s -o nul -w "%{http_code}\n" https://api.themovie
 - 动漫按剧集结构存放（`Season 01/` + `tvshow.nfo`），动画电影按电影结构存放
 - 多集合并的文件（如 `S01E01-E03`）只会取第一个集数
 - 没有 Web 界面，没有自动更新，纯命令行
-- TMDB 在国内需要代理，在 `tmdb.proxy` 里填
+- 极端网络下（四个 TMDB 域名都不通）仍需代理
 
 ## 从源码编译
 

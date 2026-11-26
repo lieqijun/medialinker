@@ -13,7 +13,16 @@ import (
 	"time"
 )
 
-const tmdbAPIBase = "https://api.themoviedb.org/3"
+// TMDB 的可用域名。国内 api.themoviedb.org 常被 DNS 污染解析到墙外或错误 IP，
+// 而 api.tmdb.org 走 CloudFront，多数网络可以直连。顺序即优先级，
+// 启动时探测第一个能用的。用户显式填了 base_url 时只用那一个。
+var tmdbAPICandidates = []string{
+	"https://api.tmdb.org/3",
+	"https://api.themoviedb.org/3",
+	"https://tmdb.nastool.cn/3",
+	"https://tmdb.nastool.workers.dev/3",
+}
+
 const tmdbImageBase = "https://image.tmdb.org/t/p/original"
 
 // TMDB 客户端，带 QPS 限流和内存缓存
@@ -25,10 +34,21 @@ type TMDB struct {
 	client    *http.Client
 	limiter   *time.Ticker
 
+	// candidates 候选域名，baseIdx 是当前在用的下标。切换域名时加锁。
+	candidates []string
+	baseIdx    int
+
 	mu       sync.Mutex
 	movies   map[int]*MovieDetail
 	tvs      map[int]*TVDetail
 	searches map[string]*SearchResult
+}
+
+// BaseURL 返回当前实际使用的 API 地址，便于启动日志显示
+func (t *TMDB) BaseURL() string {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	return t.baseURL
 }
 
 // SearchResult 搜索结果
@@ -133,34 +153,72 @@ func NewTMDB(cfg TMDBConfig) (*TMDB, error) {
 		// 没写 proxy 时，允许用 HTTPS_PROXY / HTTP_PROXY 环境变量
 		transport.Proxy = http.ProxyFromEnvironment
 	}
-	baseURL := strings.TrimRight(strings.TrimSpace(cfg.BaseURL), "/")
-	if baseURL == "" {
-		baseURL = tmdbAPIBase
+	// 用户显式填了 base_url 就只用它；留空则用内置候选列表自动探测
+	var candidates []string
+	if b := strings.TrimRight(strings.TrimSpace(cfg.BaseURL), "/"); b != "" {
+		candidates = []string{b}
+	} else {
+		candidates = append(candidates, tmdbAPICandidates...)
 	}
 	imageBase := strings.TrimRight(strings.TrimSpace(cfg.ImageBase), "/")
 	if imageBase == "" {
 		imageBase = tmdbImageBase
 	}
 	return &TMDB{
-		apiKey:    strings.TrimSpace(cfg.APIKey),
-		lang:      cfg.Language,
-		baseURL:   baseURL,
-		imageBase: imageBase,
-		client:    &http.Client{Timeout: 30 * time.Second, Transport: transport},
-		limiter:   time.NewTicker(time.Second / time.Duration(qps)),
-		movies:    map[int]*MovieDetail{},
-		tvs:       map[int]*TVDetail{},
-		searches:  map[string]*SearchResult{},
+		apiKey:     strings.TrimSpace(cfg.APIKey),
+		lang:       cfg.Language,
+		baseURL:    candidates[0],
+		imageBase:  imageBase,
+		client:     &http.Client{Timeout: 30 * time.Second, Transport: transport},
+		limiter:    time.NewTicker(time.Second / time.Duration(qps)),
+		candidates: candidates,
+		baseIdx:    0,
+		movies:     map[int]*MovieDetail{},
+		tvs:        map[int]*TVDetail{},
+		searches:   map[string]*SearchResult{},
 	}, nil
 }
 
-// get 发起一次带限流的 GET
+// switchDomain 切到下一个候选域名，返回是否还有可切换的
+func (t *TMDB) switchDomain() (string, bool) {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	if t.baseIdx+1 >= len(t.candidates) {
+		return "", false
+	}
+	t.baseIdx++
+	t.baseURL = t.candidates[t.baseIdx]
+	return t.baseURL, true
+}
+
+// get 发起一次带限流的 GET。连接失败时自动换下一个候选域名重试。
 func (t *TMDB) get(path string, params map[string]string, out any) error {
 	<-t.limiter.C
 
-	u, err := url.Parse(t.baseURL + path)
+	var lastErr error
+	for attempt := 0; attempt <= len(t.candidates); attempt++ {
+		base := t.BaseURL()
+		netFail, err := t.doGet(base, path, params, out)
+		if err == nil {
+			return nil
+		}
+		lastErr = err
+		// 只有连接层面的失败才值得换域名；401/429/404 换域名没有意义
+		if !netFail {
+			return err
+		}
+		if _, ok := t.switchDomain(); !ok {
+			break
+		}
+	}
+	return lastErr
+}
+
+// doGet 用指定域名发一次请求。netFail 为 true 表示连接失败（可换域名重试）。
+func (t *TMDB) doGet(base, path string, params map[string]string, out any) (netFail bool, err error) {
+	u, err := url.Parse(base + path)
 	if err != nil {
-		return err
+		return false, err
 	}
 	q := u.Query()
 	q.Set("language", t.lang)
@@ -173,7 +231,7 @@ func (t *TMDB) get(path string, params map[string]string, out any) error {
 
 	req, err := http.NewRequest(http.MethodGet, u.String(), nil)
 	if err != nil {
-		return err
+		return false, err
 	}
 	req.Header.Set("Accept", "application/json")
 	// v4 的 token 以 eyJ 开头（JWT），用 Bearer；v3 的 32 位 key 走 query
@@ -188,25 +246,25 @@ func (t *TMDB) get(path string, params map[string]string, out any) error {
 
 	resp, err := t.client.Do(req)
 	if err != nil {
-		return fmt.Errorf("请求 TMDB 失败: %w（如提示连接超时，通常是网络问题，请在 config.yaml 的 tmdb.proxy 填本地代理，例如 http://127.0.0.1:7890）", err)
+		return true, fmt.Errorf("请求 TMDB 失败: %w", err)
 	}
 	defer resp.Body.Close()
 
 	body, err := io.ReadAll(io.LimitReader(resp.Body, 8<<20))
 	if err != nil {
-		return err
+		return false, err
 	}
 	if resp.StatusCode == http.StatusUnauthorized {
-		return fmt.Errorf("TMDB 鉴权失败，请检查 api_key（HTTP 401）")
+		return false, fmt.Errorf("TMDB 鉴权失败，请检查 api_key（HTTP 401）")
 	}
 	if resp.StatusCode == http.StatusTooManyRequests {
 		time.Sleep(2 * time.Second)
-		return fmt.Errorf("TMDB 限流（HTTP 429），稍后重试")
+		return false, fmt.Errorf("TMDB 限流（HTTP 429），稍后重试")
 	}
 	if resp.StatusCode != http.StatusOK {
-		return fmt.Errorf("TMDB 返回 HTTP %d: %s", resp.StatusCode, truncate(string(body), 200))
+		return false, fmt.Errorf("TMDB 返回 HTTP %d: %s", resp.StatusCode, truncate(string(body), 200))
 	}
-	return json.Unmarshal(body, out)
+	return false, json.Unmarshal(body, out)
 }
 
 // Ping 启动时探一次连通性。连不上就别一个一个文件去等超时了。

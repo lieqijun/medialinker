@@ -62,11 +62,12 @@ func main() {
 	if !*parseOnly {
 		if err := tmdb.Ping(); err != nil {
 			log.Errorf("TMDB 连不上: %v", err)
-			log.Errorf("请检查 config.yaml 里的 tmdb.proxy（本地代理端口，如 http://127.0.0.1:7890）")
+			log.Errorf("内置的 %d 个 TMDB 域名都试过了（api.tmdb.org / api.themoviedb.org / tmdb.nastool.cn / tmdb.nastool.workers.dev）", len(tmdbAPICandidates))
+			log.Errorf("可以二选一：在 tmdb.base_url 填一个能访问的镜像，或在 tmdb.proxy 填本地代理端口")
 			log.Errorf("排查方法见 README 的「连不上 TMDB 怎么办」")
 			os.Exit(1)
 		}
-		log.Infof("TMDB 连接正常")
+		log.Infof("TMDB 连接正常，使用域名 %s", tmdb.BaseURL())
 	}
 
 	state, err := LoadState(cfg.StateFile)

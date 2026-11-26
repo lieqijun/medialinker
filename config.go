@@ -24,7 +24,7 @@ type TMDBConfig struct {
 	APIKey   string `yaml:"api_key"`
 	Language string `yaml:"language"`
 	Proxy    string `yaml:"proxy"`
-	// BaseURL 可填镜像/反代地址，默认 https://api.themoviedb.org/3
+	// BaseURL 留空时按内置域名列表自动探测；也可以直接填镜像/反代地址
 	BaseURL string `yaml:"base_url"`
 	// ImageBase 图片地址，默认 https://image.tmdb.org/t/p/original
 	ImageBase string `yaml:"image_base"`
@@ -79,7 +79,6 @@ func DefaultConfig() *Config {
 		TMDB: TMDBConfig{
 			Language:  "zh-CN",
 			QPS:       4,
-			BaseURL:   "https://api.themoviedb.org/3",
 			ImageBase: "https://image.tmdb.org/t/p/original",
 		},
 		Transfer: TransferConfig{
@@ -199,9 +198,7 @@ func (c *Config) validate(requireAPI bool) error {
 	if c.TMDB.Language == "" {
 		c.TMDB.Language = "zh-CN"
 	}
-	if c.TMDB.BaseURL == "" {
-		c.TMDB.BaseURL = "https://api.themoviedb.org/3"
-	}
+	// base_url 留空是合法的：NewTMDB 会按内置域名列表自动探测可用域名
 	if c.TMDB.ImageBase == "" {
 		c.TMDB.ImageBase = "https://image.tmdb.org/t/p/original"
 	}

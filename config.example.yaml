@@ -7,13 +7,15 @@
 tmdb:
   api_key: "把这里换成你的 TMDB API Key"
   language: zh-CN          # zh-CN 中文 / en-US 英文
-  # 国内直连 TMDB 基本不通（DNS 被污染），三选一：
-  # 1) 本地代理软件：填它的 HTTP 端口，常见 7890(Clash) / 10809(v2rayN) / 1080
-  # 2) 路由器上已跑代理：填路由器地址，例如 http://192.168.31.1:7890
-  # 3) 有现成的 TMDB 反代：填到 base_url，proxy 留空
-  proxy: ""
-  base_url: "https://api.themoviedb.org/3"
+  # base_url 留空即可：程序会依次尝试 api.tmdb.org → api.themoviedb.org
+  # → tmdb.nastool.cn → tmdb.nastool.workers.dev，用第一个能连通的。
+  # 注意：国内 api.themoviedb.org 常被 DNS 污染，而 api.tmdb.org 通常能直连，
+  # 所以默认先试 api.tmdb.org（nastool 也是这个默认值）。
+  # 只有在你有自己的反代镜像时才需要填这一项。
+  base_url: ""
   image_base: "https://image.tmdb.org/t/p/original"
+  # 上面四个域名都不通时，才需要代理：填本地代理端口，如 http://127.0.0.1:7890
+  proxy: ""
   qps: 4                   # 每秒请求数，TMDB 限制约 50/s，4 足够安全
 
 # ---------- 整理规则 ----------
