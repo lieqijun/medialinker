@@ -263,7 +263,7 @@ func fixQuotedPaths(raw []byte) []byte {
 // looksLikeWinPath 判断双引号里的内容是不是 Windows 路径（盘符开头或 UNC）
 func looksLikeWinPath(b []byte) bool {
 	s := strings.TrimSpace(string(b))
-	if len(s) >= 3 && s[1] == ':' && s[2] == '/' {
+	if len(s) >= 3 && s[1] == ':' && (s[2] == '\\' || s[2] == '/') {
 		c := s[0]
 		return (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z')
 	}
