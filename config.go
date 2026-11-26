@@ -33,6 +33,7 @@ type TransferConfig struct {
 	Mode     string `yaml:"mode"`      // hardlink | copy | move | symlink
 	MovieDir string `yaml:"movie_dir"` // 电影输出根目录
 	TVDir    string `yaml:"tv_dir"`    // 剧集输出根目录
+	AnimeDir string `yaml:"anime_dir"` // 动漫输出根目录，留空则并入 tv_dir
 
 	WriteMovieNFO   bool `yaml:"movie_nfo"`
 	WriteTVNFO      bool `yaml:"tvshow_nfo"`
@@ -47,6 +48,9 @@ type TransferConfig struct {
 	TVFolder     string `yaml:"tv_folder"`
 	SeasonFolder string `yaml:"season_folder"`
 	TVFile       string `yaml:"tv_file"`
+	// 动漫可单独一套命名，留空则沿用 tv_* / movie_*
+	AnimeFolder string `yaml:"anime_folder"`
+	AnimeFile   string `yaml:"anime_file"`
 }
 
 // SourceConfig 源目录
@@ -85,6 +89,8 @@ func DefaultConfig() *Config {
 			TVFolder:        "{title} ({year})",
 			SeasonFolder:    "Season {season:02}",
 			TVFile:          "{title} - S{season:02}E{episode:02}{ext}",
+			AnimeFolder:     "{title} ({year})",
+			AnimeFile:       "{title} - S{season:02}E{episode:02}{ext}",
 		},
 		Watch: WatchConfig{
 			Enabled:       true,
@@ -150,15 +156,19 @@ func (c *Config) validate(requireAPI bool) error {
 		if _, err := os.Stat(s.Path); err != nil {
 			return fmt.Errorf("源目录不可访问 %s: %w", s.Path, err)
 		}
-		if s.Type != "" && s.Type != "movie" && s.Type != "tv" {
-			return fmt.Errorf("sources[%d].type 只能是 movie 或 tv", i)
+		if s.Type != "" && s.Type != "movie" && s.Type != "tv" && s.Type != "anime" {
+			return fmt.Errorf("sources[%d].type 只能是 movie / tv / anime", i)
 		}
 	}
 
-	if c.Transfer.MovieDir == "" && c.Transfer.TVDir == "" {
-		return fmt.Errorf("transfer.movie_dir 和 transfer.tv_dir 至少要配置一个")
+	if c.Transfer.MovieDir == "" && c.Transfer.TVDir == "" && c.Transfer.AnimeDir == "" {
+		return fmt.Errorf("transfer.movie_dir、tv_dir、anime_dir 至少要配置一个")
 	}
-	for _, d := range []string{c.Transfer.MovieDir, c.Transfer.TVDir} {
+	// 动漫没单独配目录时并入剧集目录，不影响使用
+	if c.Transfer.AnimeDir == "" {
+		c.Transfer.AnimeDir = c.Transfer.TVDir
+	}
+	for _, d := range []string{c.Transfer.MovieDir, c.Transfer.TVDir, c.Transfer.AnimeDir} {
 		if d == "" {
 			continue
 		}
@@ -172,6 +182,7 @@ func (c *Config) validate(requireAPI bool) error {
 	}
 	c.Transfer.MovieDir = absOrEmpty(c.Transfer.MovieDir)
 	c.Transfer.TVDir = absOrEmpty(c.Transfer.TVDir)
+	c.Transfer.AnimeDir = absOrEmpty(c.Transfer.AnimeDir)
 
 	if c.Watch.Interval <= 0 {
 		c.Watch.Interval = 300

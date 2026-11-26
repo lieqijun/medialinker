@@ -9,9 +9,11 @@ Go 编写，单文件可执行，内存占用通常几十 MB。
 1. 扫描你指定的下载目录
 2. 从文件名解析出标题、年份、季、集
 3. 到 TMDB 查详情（中文元数据）
-4. 按模板把文件硬链接到媒体库目录（重命名为规范名称）
+4. 按模板把文件硬链接到媒体库目录（重命名为规范名称，**后缀保持源文件不变**）
 5. 生成 Emby / Jellyfin / Kodi 能读的 `.nfo`，下载 `poster.jpg`、`fanart.jpg`
 6. 记录已处理文件，下次不会重复处理
+
+电影、电视剧、动漫分三个根目录，互不混放。
 
 ## 下载
 
@@ -32,7 +34,7 @@ Go 编写，单文件可执行，内存占用通常几十 MB。
 把 `config.example.yaml` 复制成 `config.yaml`，改三处：
 
 - `tmdb.api_key`：到 <https://www.themoviedb.org/settings/api> 申请
-- `transfer.movie_dir` / `transfer.tv_dir`：媒体库输出目录
+- `transfer.movie_dir` / `transfer.tv_dir` / `transfer.anime_dir`：三个媒体库输出目录
 - `sources`：你的下载目录
 
 **2. 先验识别率（不需要 API Key）**
@@ -91,11 +93,34 @@ Some.Show.S02E05.1080p.WEB-DL.mkv             -> Some Show S02E05
 律政剧.第08集.mkv                              -> 律政剧 S01E08
 ```
 
-识别不准时，把目录的 `type` 写成 `movie` 或 `tv` 可以强制类型。
+识别不准时，把目录的 `type` 写成 `movie`、`tv` 或 `anime` 可以强制类型。
+
+## 后缀与目录规则
+
+**后缀**：一律使用源文件的原后缀，模板里的 `{ext}` 写不写都行。
+
+```
+The.Matrix.1999.1080p.mkv   ->  The Matrix (1999).mkv      （模板写成 .mp4 也还是 .mkv）
+Some.Show.S02E05.MKV        ->  Some Show - S02E05.MKV     （原样保留大小写）
+```
+
+程序会先摘掉模板渲染出来的视频后缀，再把源后缀拼回去，所以不会出现无后缀或 `name.mkv.mkv`。
+
+**目录**：按 TMDB 的类型分三个根目录。
+
+| 判定 | 目标根目录 | 模板 |
+|---|---|---|
+| 电影，类型里没有「动画」 | `movie_dir` | `movie_*` |
+| 剧集，类型里没有「动画」 | `tv_dir` | `tv_*` |
+| 电影/剧集，类型里有「动画」 | `anime_dir` | `anime_*`，留空则沿用 `movie_*` / `tv_*` |
+| 源目录写了 `type: anime` | 强制 `anime_dir` | 同上 |
+
+判定顺序是：源目录显式指定 > TMDB 类型 > 文件名特征。**TMDB 类型是最终依据**，文件名像动漫（字幕组方括号、`[01]` 集数）只用于 `-parse-only` 预览时估算，不会因为名字像就误丢进动漫目录。
 
 ## 已知限制
 
 - 只做电影和剧集，不处理音乐、图片
+- 动漫按剧集结构存放（`Season 01/` + `tvshow.nfo`），动画电影按电影结构存放
 - 多集合并的文件（如 `S01E01-E03`）只会取第一个集数
 - 没有 Web 界面，没有自动更新，纯命令行
 - TMDB 在国内需要代理，在 `tmdb.proxy` 里填

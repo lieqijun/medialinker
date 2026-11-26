@@ -18,9 +18,10 @@ transfer:
   # symlink  软链接（Windows 需要管理员权限或开发者模式）
   mode: hardlink
 
-  # 必改：媒体库输出目录
+  # 必改：媒体库输出目录（电影 / 电视剧 / 动漫 各自独立）
   movie_dir: "D:/Media/Movies"
   tv_dir: "D:/Media/TVShows"
+  anime_dir: "D:/Media/Anime"   # 留空则动漫并入 tv_dir，不分开
 
   # 是否生成 NFO 和下载图片
   movie_nfo: true
@@ -36,20 +37,26 @@ transfer:
 
   # 命名模板，可用变量：{title} {original} {year} {season} {episode} {resolution} {ext} {tmdbid} {group}
   # {season:02} 表示补零到两位
+  # 注意：后缀不用管。程序一律用源文件原后缀，模板里写不写 {ext} 都不影响，也不会把 .mkv 改成 .mp4
   movie_folder: "{title} ({year})"
-  movie_file: "{title} ({year}){ext}"
+  movie_file: "{title} ({year})"
   tv_folder: "{title} ({year})"
   season_folder: "Season {season:02}"
-  tv_file: "{title} - S{season:02}E{episode:02}{ext}"
+  tv_file: "{title} - S{season:02}E{episode:02}"
+  # 动漫可以单独一套命名，留空则沿用上面的 tv_* / movie_*
+  anime_folder: "{title} ({year})"
+  anime_file: "{title} - S{season:02}E{episode:02}"
 
 # ---------- 源目录 ----------
 # 必改：填你实际放下载文件的目录，可以写多个
 sources:
   - path: "D:/Downloads/Movies"
-    type: movie            # movie / tv，留空则按文件名自动判断
+    type: movie            # movie / tv / anime，留空则按文件名 + TMDB 类型自动判断
   - path: "D:/Downloads/TV"
     type: tv
     recursive: true        # 是否递归子目录，默认 true
+  - path: "D:/Downloads/Anime"
+    type: anime            # 显式指定：这个目录的片子一律进 anime_dir
 
 # ---------- 扫描 ----------
 watch:

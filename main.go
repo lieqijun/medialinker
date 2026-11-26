@@ -42,8 +42,8 @@ func main() {
 
 	log := NewLogger(cfg.LogLevel)
 	log.Infof("media-linker %s 启动", appVersion)
-	log.Infof("整理模式: %s | 电影目录: %s | 剧集目录: %s",
-		cfg.Transfer.Mode, orDash(cfg.Transfer.MovieDir), orDash(cfg.Transfer.TVDir))
+	log.Infof("整理模式: %s | 电影目录: %s | 剧集目录: %s | 动漫目录: %s",
+		cfg.Transfer.Mode, orDash(cfg.Transfer.MovieDir), orDash(cfg.Transfer.TVDir), orDash(cfg.Transfer.AnimeDir))
 	log.Infof("源目录: %d 个 | 扫描间隔: %ds", len(cfg.Sources), cfg.Watch.Interval)
 	if *dryRun {
 		log.Warnf("dry-run 模式：不会写入任何文件")
@@ -180,6 +180,7 @@ func (a *App) handleFile(src SourceConfig, path string, idx, total int) stats {
 			p.Season = 1
 		}
 	}
+	// type: anime 不改变电影/剧集判定，只影响最终进哪个目录
 	a.log.Infof("  解析: %s", p.String())
 
 	if p.Title == "" {
@@ -190,8 +191,12 @@ func (a *App) handleFile(src SourceConfig, path string, idx, total int) stats {
 
 	// parse-only：打印识别结果与预估目标，到此为止
 	if a.parseOnly {
-		m := &MediaInfo{Kind: p.Kind, Title: p.Title, OriginalTitle: p.Title, Year: p.Year}
+		anime := a.animeByHint(src.Type, p)
+		m := &MediaInfo{Kind: p.Kind, Title: p.Title, OriginalTitle: p.Title, Year: p.Year, Anime: anime}
 		if dir, file, err := targetPaths(p, m, a.cfg); err == nil {
+			if anime {
+				a.log.Infof("  归类: 动漫（按文件名特征判断，正式跑会以 TMDB 类型复核）")
+			}
 			a.log.Infof("  预估目标: %s", filepath.Join(dir, file))
 		}
 		st.processed = 1
@@ -215,25 +220,26 @@ func (a *App) handleFile(src SourceConfig, path string, idx, total int) stats {
 	a.log.Infof("  TMDB: %s (%d) id=%d", sr.Title, sr.Year, sr.ID)
 
 	if a.dryRun {
-		m := &MediaInfo{Kind: p.Kind, Title: sr.Title, OriginalTitle: sr.OriginalName, Year: sr.Year, TMDBID: sr.ID}
+		m, err := a.buildMediaInfo(src.Type, p, sr.ID)
+		if err != nil {
+			a.log.Errorf("  %v", err)
+			st.failed = 1
+			return st
+		}
 		dir, file, err := targetPaths(p, m, a.cfg)
 		if err != nil {
 			a.log.Errorf("  计算目标路径失败: %v", err)
 			st.failed = 1
 			return st
 		}
+		a.log.Infof("  归类: %s", kindLabel(m))
 		a.log.Infof("  目标: %s", filepath.Join(dir, file))
 		st.processed = 1
 		return st
 	}
 
 	// 按类型抓详情并整理
-	var dst string
-	if p.Kind == KindMovie {
-		dst, err = a.handleMovie(path, p, sr.ID)
-	} else {
-		dst, err = a.handleTV(path, p, sr.ID)
-	}
+	dst, err := a.handleItem(src.Type, path, p, sr.ID)
 	if err != nil {
 		a.log.Errorf("  整理失败: %v", err)
 		st.failed = 1
@@ -254,38 +260,70 @@ func (a *App) handleFile(src SourceConfig, path string, idx, total int) stats {
 	return st
 }
 
-func (a *App) handleMovie(path string, p *ParsedMedia, tmdbID int) (string, error) {
-	d, err := a.tmdb.Movie(tmdbID)
-	if err != nil {
-		return "", fmt.Errorf("获取电影详情失败: %w", err)
+// buildMediaInfo 查详情并组装 MediaInfo，dry-run 与正式流程共用同一套判定
+func (a *App) buildMediaInfo(srcType string, p *ParsedMedia, tmdbID int) (*MediaInfo, error) {
+	if p.Kind == KindMovie {
+		d, err := a.tmdb.Movie(tmdbID)
+		if err != nil {
+			return nil, fmt.Errorf("获取电影详情失败: %w", err)
+		}
+		return &MediaInfo{
+			Kind:          KindMovie,
+			Title:         d.Title,
+			OriginalTitle: d.OriginalTitle,
+			Year:          d.Year,
+			TMDBID:        d.ID,
+			Anime:         decideAnime(srcType, p.AnimeHint, d.Genres),
+		}, nil
 	}
-	m := &MediaInfo{Kind: KindMovie, Title: d.Title, OriginalTitle: d.OriginalTitle, Year: d.Year, TMDBID: d.ID}
+	d, err := a.tmdb.TV(tmdbID)
+	if err != nil {
+		return nil, fmt.Errorf("获取剧集详情失败: %w", err)
+	}
+	return &MediaInfo{
+		Kind:          KindTV,
+		Title:         d.Name,
+		OriginalTitle: d.OriginalName,
+		Year:          d.Year,
+		TMDBID:        d.ID,
+		Anime:         decideAnime(srcType, p.AnimeHint, d.Genres),
+	}, nil
+}
 
-	dst, err := Transfer(path, p, m, a.cfg, a.log)
+// handleItem 抓详情 -> 判断类型 -> 转移 -> 写 NFO/图片
+func (a *App) handleItem(srcType, path string, p *ParsedMedia, tmdbID int) (string, error) {
+	m, err := a.buildMediaInfo(srcType, p, tmdbID)
 	if err != nil {
 		return "", err
 	}
-	dir := filepath.Dir(dst)
+	a.log.Infof("  归类: %s", kindLabel(m))
 
-	if a.cfg.Transfer.WriteMovieNFO {
-		if err := WriteMovieNFO(dir, d, a.log); err != nil {
-			a.log.Warnf("  %v", err)
+	if p.Kind == KindMovie {
+		d, err := a.tmdb.Movie(tmdbID)
+		if err != nil {
+			return "", fmt.Errorf("获取电影详情失败: %w", err)
 		}
+		dst, err := Transfer(path, p, m, a.cfg, a.log)
+		if err != nil {
+			return "", err
+		}
+		dir := filepath.Dir(dst)
+		if a.cfg.Transfer.WriteMovieNFO {
+			if err := WriteMovieNFO(dir, d, a.log); err != nil {
+				a.log.Warnf("  %v", err)
+			}
+		}
+		if a.cfg.Transfer.DownloadImages {
+			a.saveImage(d.PosterPath, filepath.Join(dir, "poster.jpg"))
+			a.saveImage(d.BackdropPath, filepath.Join(dir, "fanart.jpg"))
+		}
+		return dst, nil
 	}
-	if a.cfg.Transfer.DownloadImages {
-		a.saveImage(d.PosterPath, filepath.Join(dir, "poster.jpg"))
-		a.saveImage(d.BackdropPath, filepath.Join(dir, "fanart.jpg"))
-	}
-	return dst, nil
-}
 
-func (a *App) handleTV(path string, p *ParsedMedia, tmdbID int) (string, error) {
 	d, err := a.tmdb.TV(tmdbID)
 	if err != nil {
 		return "", fmt.Errorf("获取剧集详情失败: %w", err)
 	}
-	m := &MediaInfo{Kind: KindTV, Title: d.Name, OriginalTitle: d.OriginalName, Year: d.Year, TMDBID: d.ID}
-
 	dst, err := Transfer(path, p, m, a.cfg, a.log)
 	if err != nil {
 		return "", err
@@ -318,6 +356,50 @@ func (a *App) handleTV(path string, p *ParsedMedia, tmdbID int) (string, error) 
 		}
 	}
 	return dst, nil
+}
+
+// animeByHint 不联网时的动漫判断（parse-only 预览用）
+func (a *App) animeByHint(srcType string, p *ParsedMedia) bool {
+	return decideAnime(srcType, p.AnimeHint, nil)
+}
+
+// decideAnime 动漫归类的唯一判定入口。
+// 优先级：源目录显式指定 anime > TMDB 类型里有动画 > 文件名特征（仅在拿不到类型时兜底）。
+func decideAnime(srcType string, hint bool, genres []string) bool {
+	if strings.EqualFold(srcType, "anime") {
+		return true
+	}
+	if len(genres) > 0 {
+		for _, g := range genres {
+			if isAnimationGenre(g) {
+				return true
+			}
+		}
+		// 有类型信息且不含动画 -> 就按普通电影/剧集处理，不信文件名
+		return false
+	}
+	return hint
+}
+
+func isAnimationGenre(g string) bool {
+	switch strings.ToLower(strings.TrimSpace(g)) {
+	case "动画", "動畫", "animation", "anime", "アニメ":
+		return true
+	}
+	return false
+}
+
+func kindLabel(m *MediaInfo) string {
+	if m.Anime {
+		if m.Kind == KindMovie {
+			return "动漫电影"
+		}
+		return "动漫"
+	}
+	if m.Kind == KindMovie {
+		return "电影"
+	}
+	return "电视剧"
 }
 
 func (a *App) saveImage(imagePath, dest string) {

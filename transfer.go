@@ -58,14 +58,9 @@ func tidyPart(s string) string {
 	return strings.Trim(s, " .-_")
 }
 
-// tidyPartFile 同 tidyPart，但保留扩展名
-func tidyPartFile(name string) string {
-	ext := filepath.Ext(name)
-	return tidyPart(strings.TrimSuffix(name, ext)) + ext
-}
-
 // targetPaths 计算目标目录与文件名
 func targetPaths(p *ParsedMedia, m *MediaInfo, cfg *Config) (dir, file string, err error) {
+	srcExt := p.ext()
 	vars := map[string]string{
 		"title":      m.Title,
 		"original":   m.OriginalTitle,
@@ -73,36 +68,65 @@ func targetPaths(p *ParsedMedia, m *MediaInfo, cfg *Config) (dir, file string, e
 		"season":     strconv.Itoa(p.Season),
 		"episode":    strconv.Itoa(p.Episode),
 		"resolution": p.Resolution,
-		"ext":        p.Ext,
+		"ext":        srcExt,
 		"tmdbid":     strconv.Itoa(m.TMDBID),
 		"group":      p.Group,
 	}
 
 	tc := cfg.Transfer
-	switch p.Kind {
-	case KindMovie:
-		if tc.MovieDir == "" {
-			return "", "", fmt.Errorf("未配置 transfer.movie_dir，无法处理电影 %s", p.Raw)
-		}
-		folder := tidyPart(renderTemplate(tc.MovieFolder, vars))
-		dir = filepath.Join(tc.MovieDir, folder)
-		file = tidyPartFile(renderTemplate(tc.MovieFile, vars))
-	case KindTV:
-		if tc.TVDir == "" {
-			return "", "", fmt.Errorf("未配置 transfer.tv_dir，无法处理剧集 %s", p.Raw)
-		}
-		folder := tidyPart(renderTemplate(tc.TVFolder, vars))
-		seasonDir := tidyPart(renderTemplate(tc.SeasonFolder, vars))
-		dir = filepath.Join(tc.TVDir, folder, seasonDir)
-		file = tidyPartFile(renderTemplate(tc.TVFile, vars))
-	default:
-		return "", "", fmt.Errorf("无法判断媒体类型: %s", p.Raw)
+	var rootDir, folderTpl, fileTpl, seasonTpl string
+
+	switch {
+	case p.Kind == KindMovie && !m.Anime:
+		rootDir, folderTpl, fileTpl = tc.MovieDir, tc.MovieFolder, tc.MovieFile
+	case p.Kind == KindMovie && m.Anime:
+		// 动画电影：进动漫目录，命名沿用电影模板
+		rootDir = firstNonEmpty(tc.AnimeDir, tc.MovieDir)
+		folderTpl = firstNonEmpty(tc.AnimeFolder, tc.MovieFolder)
+		fileTpl = firstNonEmpty(tc.AnimeFile, tc.MovieFile)
+	case p.Kind == KindTV && !m.Anime:
+		rootDir, folderTpl, fileTpl = tc.TVDir, tc.TVFolder, tc.TVFile
+		seasonTpl = tc.SeasonFolder
+	default: // 剧集形态的动漫
+		rootDir = firstNonEmpty(tc.AnimeDir, tc.TVDir)
+		folderTpl = firstNonEmpty(tc.AnimeFolder, tc.TVFolder)
+		fileTpl = firstNonEmpty(tc.AnimeFile, tc.TVFile)
+		seasonTpl = tc.SeasonFolder
 	}
+
+	if rootDir == "" {
+		return "", "", fmt.Errorf("没有可用的输出目录，请检查 %s 对应的 *_dir 配置", p.Kind)
+	}
+
+	folder := tidyPart(renderTemplate(folderTpl, vars))
+	dir = filepath.Join(rootDir, folder)
+	if seasonTpl != "" {
+		dir = filepath.Join(dir, tidyPart(renderTemplate(seasonTpl, vars)))
+	}
+	file = finalizeFileName(renderTemplate(fileTpl, vars), srcExt, m)
 
 	if file == "" {
 		return "", "", fmt.Errorf("文件名模板渲染结果为空，请检查 transfer 配置")
 	}
 	return dir, file, nil
+}
+
+// finalizeFileName 收尾：后缀一律取源文件，模板里写什么后缀都不生效。
+// 这样即使模板忘了写 {ext}、或者写成 .mp4，落盘也不会出现无后缀或后缀被改的情况。
+func finalizeFileName(rendered, srcExt string, m *MediaInfo) string {
+	name := strings.TrimSpace(rendered)
+	// 先摘掉模板可能带出来的视频后缀，避免 name.mkv.mkv
+	if e := filepath.Ext(name); e != "" && videoExts[strings.ToLower(e)] {
+		name = strings.TrimSuffix(name, e)
+	}
+	name = tidyPart(name)
+	if name == "" {
+		name = tidyPart(fmt.Sprintf("%s (%d)", m.Title, m.Year))
+	}
+	if name == "" {
+		return ""
+	}
+	return name + srcExt
 }
 
 // MediaInfo 从 TMDB 得到的最终信息（电影与剧集共用）
@@ -112,6 +136,7 @@ type MediaInfo struct {
 	OriginalTitle string
 	Year          int
 	TMDBID        int
+	Anime         bool // 是否归入动漫目录
 }
 
 // Transfer 把文件按规则硬链接/复制到媒体库

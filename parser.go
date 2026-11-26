@@ -39,8 +39,17 @@ type ParsedMedia struct {
 	VideoCodec string
 	AudioCodec string
 	Group      string
-	Ext        string
+	Ext        string // 小写后缀，用于判断
+	ExtRaw     string // 原始后缀（含大小写），落盘时一律用它
+	AnimeHint  bool   // 文件名特征像动漫（仅作预览与兜底，最终以 TMDB 类型为准）
 	Raw        string // 原始文件名
+}
+
+func (p *ParsedMedia) ext() string {
+	if p.ExtRaw != "" {
+		return p.ExtRaw
+	}
+	return p.Ext
 }
 
 var videoExts = map[string]bool{
@@ -77,10 +86,11 @@ var (
 
 // ParseFileName 解析文件名
 func ParseFileName(name string) *ParsedMedia {
-	ext := strings.ToLower(filepath.Ext(name))
-	base := strings.TrimSuffix(name, filepath.Ext(name))
+	extRaw := filepath.Ext(name)
+	ext := strings.ToLower(extRaw)
+	base := strings.TrimSuffix(name, extRaw)
 
-	p := &ParsedMedia{Ext: ext, Raw: name}
+	p := &ParsedMedia{Ext: ext, ExtRaw: extRaw, Raw: name}
 	work := base
 
 	// 1. 抓取技术标记（抓完即从工作串移除，避免干扰标题）
@@ -198,7 +208,33 @@ func ParseFileName(name string) *ParsedMedia {
 	} else {
 		p.Kind = KindMovie
 	}
+
+	// 8. 动漫特征（只用于预览和兜底，最终以 TMDB 的动画类型为准）
+	p.AnimeHint = animeHint(name, bracketEp)
 	return p
+}
+
+// reTagOnly 纯画质/编码标记，像 "[4K] 流浪地球" 这种不能当成字幕组
+var reTagOnly = regexp.MustCompile(`(?i)^(4k|8k|2160p|1080p|1080i|720p|576p|480p|hdr|hdr10|dovi|dv|sdr|x264|x265|h\.?264|h\.?265|hevc|avc|av1|web-?dl|webrip|bluray|blu-?ray|remux|uhd|dts|aac|ac3|eac3|ddp?|truehd|atmos|flac)$`)
+
+// animeHint 判断文件名是否像动漫。宁可漏判（走 TMDB 类型兜底），不要错判。
+func animeHint(name string, bracketEp int) bool {
+	low := strings.ToLower(name)
+	for _, k := range []string{"动漫", "新番", "番剧", "字幕组", "字幕社"} {
+		if strings.Contains(low, k) {
+			return true
+		}
+	}
+	// "[VCB-Studio] xxx" 这类以方括号开头的，常见于字幕组发布；
+	// 但如果方括号里只是 [4K]/[1080p] 这种标记，就不算
+	t := strings.TrimSpace(name)
+	if strings.HasPrefix(t, "[") || strings.HasPrefix(t, "【") {
+		inner := strings.TrimPrefix(strings.TrimPrefix(t, "["), "【")
+		if i := strings.IndexAny(inner, "]】"); i > 0 && !reTagOnly.MatchString(strings.TrimSpace(inner[:i])) {
+			return true
+		}
+	}
+	return bracketEp > 0
 }
 
 // grabAndRemove 抓取第一个匹配并把它从串里移除
