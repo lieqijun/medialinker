@@ -1,0 +1,62 @@
+# media-linker 配置文件
+# 用法：把本文件复制为 config.yaml，改下面几处标了必改的地方。
+
+# ---------- TMDB ----------
+# 必改：到 https://www.themoviedb.org/settings/api 注册后拿 API Key
+# v3 的 Key（32 位）和 v4 的 Read Access Token（eyJ 开头）都支持，程序会自动判断
+tmdb:
+  api_key: "把这里换成你的 TMDB API Key"
+  language: zh-CN          # zh-CN 中文 / en-US 英文
+  proxy: ""                # 需要代理才能访问 TMDB 时填，例如 http://127.0.0.1:7890
+  qps: 4                   # 每秒请求数，TMDB 限制约 50/s，4 足够安全
+
+# ---------- 整理规则 ----------
+transfer:
+  # hardlink 硬链接（不占额外空间，但要求源和目标在同一分区）
+  # copy     复制（跨盘可用，占双倍空间）
+  # move     移动（源文件会被删掉）
+  # symlink  软链接（Windows 需要管理员权限或开发者模式）
+  mode: hardlink
+
+  # 必改：媒体库输出目录
+  movie_dir: "D:/Media/Movies"
+  tv_dir: "D:/Media/TVShows"
+
+  # 是否生成 NFO 和下载图片
+  movie_nfo: true
+  tvshow_nfo: true
+  episode_nfo: true
+  download_images: true
+
+  # 小于这个体积（MB）的文件直接跳过，用来排除预告片、样片
+  min_size_mb: 50
+
+  # 目标已存在时：skip 跳过 / replace 覆盖 / suffix 加 (1) 后缀
+  overwrite: skip
+
+  # 命名模板，可用变量：{title} {original} {year} {season} {episode} {resolution} {ext} {tmdbid} {group}
+  # {season:02} 表示补零到两位
+  movie_folder: "{title} ({year})"
+  movie_file: "{title} ({year}){ext}"
+  tv_folder: "{title} ({year})"
+  season_folder: "Season {season:02}"
+  tv_file: "{title} - S{season:02}E{episode:02}{ext}"
+
+# ---------- 源目录 ----------
+# 必改：填你实际放下载文件的目录，可以写多个
+sources:
+  - path: "D:/Downloads/Movies"
+    type: movie            # movie / tv，留空则按文件名自动判断
+  - path: "D:/Downloads/TV"
+    type: tv
+    recursive: true        # 是否递归子目录，默认 true
+
+# ---------- 扫描 ----------
+watch:
+  enabled: true            # false 则只在启动时扫一次就退出
+  interval: 300            # 扫描间隔（秒）
+  stable_seconds: 60       # 文件最后修改时间距今小于这个值就跳过，避免处理正在下载的文件
+
+# ---------- 其他 ----------
+state_file: state.json     # 已处理记录，避免重复刮削
+log_level: info            # debug / info / warn / error
