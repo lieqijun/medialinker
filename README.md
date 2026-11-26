@@ -35,7 +35,15 @@ Go 编写，单文件可执行，内存占用通常几十 MB。
 - `transfer.movie_dir` / `transfer.tv_dir`：媒体库输出目录
 - `sources`：你的下载目录
 
-**2. 先干跑一次看结果**
+**2. 先验识别率（不需要 API Key）**
+
+```bash
+medialinker.exe -config config.yaml -parse-only -once
+```
+
+只解析文件名、打印识别出的标题和季集，不联网也不写文件。识别不准时先调文件名，或给源目录加 `type: movie` / `type: tv` 强制类型。
+
+**3. 再干跑一次看目标路径**
 
 ```bash
 medialinker.exe -config config.yaml -once -dry-run
@@ -43,7 +51,7 @@ medialinker.exe -config config.yaml -once -dry-run
 
 只打印将要生成的目标路径，不写任何文件。
 
-**3. 确认无误后正式跑**
+**4. 确认无误后正式跑**
 
 ```bash
 medialinker.exe -config config.yaml
@@ -58,6 +66,7 @@ medialinker.exe -config config.yaml
 | `-config <路径>` | 配置文件，默认 `config.yaml` |
 | `-once` | 只扫一次就退出 |
 | `-dry-run` | 只打印，不写文件 |
+| `-parse-only` | 只解析文件名并打印识别结果，不联网、不写文件（没填 API Key 也能跑） |
 | `-interval <秒>` | 覆盖配置里的扫描间隔 |
 | `-version` | 打印版本 |
 

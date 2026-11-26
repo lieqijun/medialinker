@@ -96,8 +96,9 @@ func DefaultConfig() *Config {
 	}
 }
 
-// LoadConfig 读取并校验配置
-func LoadConfig(path string) (*Config, error) {
+// LoadConfig 读取并校验配置。requireAPI 为 false 时不强制要求 tmdb.api_key
+// （-parse-only 只解析文件名，不需要联网）。
+func LoadConfig(path string, requireAPI bool) (*Config, error) {
 	raw, err := os.ReadFile(path)
 	if err != nil {
 		return nil, fmt.Errorf("读取配置文件失败: %w", err)
@@ -108,14 +109,14 @@ func LoadConfig(path string) (*Config, error) {
 		return nil, fmt.Errorf("解析配置文件失败: %w", err)
 	}
 
-	if err := cfg.validate(); err != nil {
+	if err := cfg.validate(requireAPI); err != nil {
 		return nil, err
 	}
 	return cfg, nil
 }
 
-func (c *Config) validate() error {
-	if strings.TrimSpace(c.TMDB.APIKey) == "" {
+func (c *Config) validate(requireAPI bool) error {
+	if requireAPI && strings.TrimSpace(c.TMDB.APIKey) == "" {
 		return fmt.Errorf("tmdb.api_key 未配置，请到 https://www.themoviedb.org/settings/api 申请")
 	}
 

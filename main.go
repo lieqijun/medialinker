@@ -21,6 +21,7 @@ func main() {
 		once       = flag.Bool("once", false, "只扫描一次后退出")
 		dryRun     = flag.Bool("dry-run", false, "只打印将要执行的操作，不实际写入")
 		interval   = flag.Int("interval", 0, "扫描间隔（秒），覆盖配置里的 watch.interval")
+		parseOnly  = flag.Bool("parse-only", false, "只解析文件名并打印识别结果，不联网、不写文件")
 		showVer    = flag.Bool("version", false, "打印版本")
 	)
 	flag.Parse()
@@ -30,7 +31,7 @@ func main() {
 		return
 	}
 
-	cfg, err := LoadConfig(*configPath)
+	cfg, err := LoadConfig(*configPath, !*parseOnly)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "配置错误: %v\n", err)
 		os.Exit(1)
@@ -47,6 +48,9 @@ func main() {
 	if *dryRun {
 		log.Warnf("dry-run 模式：不会写入任何文件")
 	}
+	if *parseOnly {
+		log.Warnf("parse-only 模式：只解析文件名，不联网、不写文件")
+	}
 
 	tmdb, err := NewTMDB(cfg.TMDB)
 	if err != nil {
@@ -60,7 +64,7 @@ func main() {
 		state = &State{path: cfg.StateFile, data: map[string]Record{}}
 	}
 
-	app := &App{cfg: cfg, log: log, tmdb: tmdb, state: state, dryRun: *dryRun}
+	app := &App{cfg: cfg, log: log, tmdb: tmdb, state: state, dryRun: *dryRun, parseOnly: *parseOnly}
 
 	// 首次立即扫描
 	app.scanAll()
@@ -90,11 +94,12 @@ func main() {
 
 // App 运行上下文
 type App struct {
-	cfg    *Config
-	log    *Logger
-	tmdb   *TMDB
-	state  *State
-	dryRun bool
+	cfg       *Config
+	log       *Logger
+	tmdb      *TMDB
+	state     *State
+	dryRun    bool
+	parseOnly bool
 }
 
 type stats struct {
@@ -151,7 +156,7 @@ func (a *App) handleFile(src SourceConfig, path string, idx, total int) stats {
 
 	// 体积过滤（排除广告、样片）
 	minSize := a.cfg.Transfer.MinSizeMB * 1024 * 1024
-	if minSize > 0 && info.Size() < minSize {
+	if !a.parseOnly && minSize > 0 && info.Size() < minSize {
 		a.log.Debugf("体积 %.1fMB 小于阈值，跳过", float64(info.Size())/1024/1024)
 		st.skipped = 1
 		return st
@@ -159,7 +164,7 @@ func (a *App) handleFile(src SourceConfig, path string, idx, total int) stats {
 
 	// 正在写入的文件先不动
 	stable := time.Duration(a.cfg.Watch.StableSeconds) * time.Second
-	if stable > 0 && time.Since(info.ModTime()) < stable {
+	if !a.parseOnly && stable > 0 && time.Since(info.ModTime()) < stable {
 		a.log.Infof("文件仍在变化（%s 内修改过），本轮跳过", stable)
 		st.skipped = 1
 		return st
@@ -180,6 +185,16 @@ func (a *App) handleFile(src SourceConfig, path string, idx, total int) stats {
 	if p.Title == "" {
 		a.log.Warnf("  无法从文件名解析出标题，跳过")
 		st.failed = 1
+		return st
+	}
+
+	// parse-only：打印识别结果与预估目标，到此为止
+	if a.parseOnly {
+		m := &MediaInfo{Kind: p.Kind, Title: p.Title, OriginalTitle: p.Title, Year: p.Year}
+		if dir, file, err := targetPaths(p, m, a.cfg); err == nil {
+			a.log.Infof("  预估目标: %s", filepath.Join(dir, file))
+		}
+		st.processed = 1
 		return st
 	}
 
