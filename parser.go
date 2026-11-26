@@ -55,7 +55,6 @@ func isVideoFile(name string) bool {
 
 var (
 	reYearParen = regexp.MustCompile(`[\(\[]((?:19|20)\d{2})[\)\]]`)
-	reYearLoose = regexp.MustCompile(`(?:^|[\s._\-])((?:19|20)\d{2})(?:[\s._\-]|$)`)
 
 	reSeasonEp  = regexp.MustCompile(`(?i)S(\d{1,2})[\s._\-]?E(\d{1,4})`)
 	reSeasonEp2 = regexp.MustCompile(`(?i)(?:^|[\s._\-])(\d{1,2})x(\d{2,4})(?:[\s._\-]|$)`)
@@ -72,6 +71,8 @@ var (
 
 	reBracket   = regexp.MustCompile(`\[[^\]]*\]|【[^】]*】|（[^）]*）`)
 	reGroupTail = regexp.MustCompile(`[\s._\-]+([A-Za-z][A-Za-z0-9@._\-]{1,30})$`)
+	// 方括号里的纯数字，动漫常见写法：[01] [12]
+	reBracketEp = regexp.MustCompile(`\[(\d{1,4})\]|【(\d{1,4})】`)
 )
 
 // ParseFileName 解析文件名
@@ -91,6 +92,14 @@ func ParseFileName(name string) *ParsedMedia {
 
 	// 2. 年份（必须在删括号之前提取，否则 "(2019)" 会被当成分组一起删掉）
 	p.Year, work = lastYear(work)
+
+	// 2.1 方括号里的纯数字多半是集数（[01]），删括号前先记下
+	bracketEp := 0
+	if m := reBracketEp.FindStringSubmatch(work); m != nil {
+		if n, _ := strconv.Atoi(firstNonEmpty(m[1], m[2])); n > 0 && n < 1000 {
+			bracketEp = n
+		}
+	}
 
 	// 3. 移除方括号分组（字幕组 / 语言 / 来源），第一个当作压制组
 	if m := reBracket.FindString(work); m != "" {
@@ -151,6 +160,12 @@ func ParseFileName(name string) *ParsedMedia {
 		}
 	}
 
+	// 方括号集数兜底（SxxExx / 第N集 都没匹配到时）
+	if !epFound && bracketEp > 0 {
+		p.Episode = bracketEp
+		epFound = true
+	}
+
 	// 5. 尾部压制组
 	if m := reGroupTail.FindStringSubmatch(work); m != nil {
 		group := m[1]
@@ -204,25 +219,58 @@ func removeAll(work *string, re *regexp.Regexp) {
 	*work = re.ReplaceAllString(*work, " ")
 }
 
-// lastYear 取文本中最后一个像年份的数字，并把该数字抹掉
+// lastYear 取文本中最后一个像年份的独立数字，并把该数字抹掉。
+// 用逐字符扫描而不是正则：正则里的分隔符会被匹配消耗掉，
+// 像 "1917.2019" 这种相邻年份只有前一个能匹配上。
 func lastYear(s string) (int, string) {
+	// 括号里的年份优先
 	if ms := reYearParen.FindAllStringSubmatchIndex(s, -1); len(ms) > 0 {
 		last := ms[len(ms)-1]
 		y, _ := strconv.Atoi(s[last[2]:last[3]])
 		if plausibleYear(y) {
-			return y, s[:last[2]] + " " + s[last[3]:]
+			return y, s[:last[0]] + " " + s[last[1]:]
 		}
 	}
-	if ms := reYearLoose.FindAllStringSubmatchIndex(s, -1); len(ms) > 0 {
-		for i := len(ms) - 1; i >= 0; i-- {
-			m := ms[i]
-			y, _ := strconv.Atoi(s[m[2]:m[3]])
-			if plausibleYear(y) {
-				return y, s[:m[2]] + " " + s[m[3]:]
+
+	r := []rune(s)
+	bestPos, bestYear := -1, 0
+	for i := 0; i+4 <= len(r); i++ {
+		digits := true
+		for k := 0; k < 4; k++ {
+			if r[i+k] < '0' || r[i+k] > '9' {
+				digits = false
+				break
 			}
 		}
+		if !digits {
+			continue
+		}
+		if i > 0 && !isYearSep(r[i-1]) {
+			continue
+		}
+		if i+4 < len(r) && !isYearSep(r[i+4]) {
+			continue
+		}
+		y := 0
+		for k := 0; k < 4; k++ {
+			y = y*10 + int(r[i+k]-'0')
+		}
+		if plausibleYear(y) {
+			bestPos, bestYear = i, y
+		}
+	}
+	if bestPos >= 0 {
+		return bestYear, string(r[:bestPos]) + " " + string(r[bestPos+4:])
 	}
 	return 0, s
+}
+
+func isYearSep(r rune) bool {
+	switch r {
+	case ' ', '.', '_', '-', '[', ']', '(', ')', '【', '】', '（', '）':
+		return true
+	}
+	return false
 }
 
 func plausibleYear(y int) bool { return y >= 1900 && y <= 2100 }

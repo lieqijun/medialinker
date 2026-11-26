@@ -21,6 +21,10 @@ func renderTemplate(tpl string, vars map[string]string) string {
 		if !ok {
 			return ""
 		}
+		// 扩展名自带前导点，不能走 sanitizeName（它会 Trim 掉点）
+		if key == "ext" {
+			return val
+		}
 		if sub[2] != "" && val != "" {
 			if n, err := strconv.Atoi(val); err == nil {
 				// 支持 02 / 2 这类宽度写法
