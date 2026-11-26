@@ -3,10 +3,12 @@
 *.exe
 medialinker
 
-# 本地配置与状态（含 API Key，不要提交）
-config.yaml
+# 运行时状态（不要提交）
 state.json
 state.json.tmp
+
+# 注意：config.yaml 是随包发布的模板，需要提交（打包时要用）。
+# 你填了真实 API Key 之后，不要把它推到公开仓库。
 
 # 编辑器 / 系统
 .vscode/

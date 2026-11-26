@@ -42,9 +42,11 @@ func main() {
 
 	log := NewLogger(cfg.LogLevel)
 	log.Infof("media-linker %s 启动", appVersion)
-	log.Infof("整理模式: %s | 电影目录: %s | 剧集目录: %s | 动漫目录: %s",
-		cfg.Transfer.Mode, orDash(cfg.Transfer.MovieDir), orDash(cfg.Transfer.TVDir), orDash(cfg.Transfer.AnimeDir))
-	log.Infof("源目录: %d 个 | 扫描间隔: %ds", len(cfg.Sources), cfg.Watch.Interval)
+	log.Infof("媒体库: %s", cfg.Transfer.MediaDir)
+	log.Infof("  ├─ 电影   %s", cfg.Transfer.MovieRoot())
+	log.Infof("  ├─ 电视剧 %s", cfg.Transfer.TVRoot())
+	log.Infof("  └─ 动漫   %s", cfg.Transfer.AnimeRoot())
+	log.Infof("整理模式: %s | 源目录: %d 个 | 扫描间隔: %ds", cfg.Transfer.Mode, len(cfg.Sources), cfg.Watch.Interval)
 	if *dryRun {
 		log.Warnf("dry-run 模式：不会写入任何文件")
 	}
@@ -62,9 +64,8 @@ func main() {
 	if !*parseOnly {
 		if err := tmdb.Ping(); err != nil {
 			log.Errorf("TMDB 连不上: %v", err)
-			log.Errorf("内置的 %d 个 TMDB 域名都试过了（api.tmdb.org / api.themoviedb.org / tmdb.nastool.cn / tmdb.nastool.workers.dev）", len(tmdbAPICandidates))
-			log.Errorf("可以二选一：在 tmdb.base_url 填一个能访问的镜像，或在 tmdb.proxy 填本地代理端口")
-			log.Errorf("排查方法见 README 的「连不上 TMDB 怎么办」")
+			log.Errorf("默认域名是 %s（国内 api.themoviedb.org 被污染，不要用它）", defaultTMDBAPI)
+			log.Errorf("如确实访问不了，可在 config.yaml 的 tmdb.base_url 换成你自己能访问的镜像")
 			os.Exit(1)
 		}
 		log.Infof("TMDB 连接正常，使用域名 %s", tmdb.BaseURL())

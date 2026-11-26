@@ -23,8 +23,7 @@ type Config struct {
 type TMDBConfig struct {
 	APIKey   string `yaml:"api_key"`
 	Language string `yaml:"language"`
-	Proxy    string `yaml:"proxy"`
-	// BaseURL 留空时按内置域名列表自动探测；也可以直接填镜像/反代地址
+	// BaseURL 留空即用默认的 https://api.tmdb.org/3；只有自己有反代时才需要改
 	BaseURL string `yaml:"base_url"`
 	// ImageBase 图片地址，默认 https://image.tmdb.org/t/p/original
 	ImageBase string `yaml:"image_base"`
@@ -34,10 +33,10 @@ type TMDBConfig struct {
 
 // TransferConfig 整理规则
 type TransferConfig struct {
-	Mode     string `yaml:"mode"`      // hardlink | copy | move | symlink
-	MovieDir string `yaml:"movie_dir"` // 电影输出根目录
-	TVDir    string `yaml:"tv_dir"`    // 剧集输出根目录
-	AnimeDir string `yaml:"anime_dir"` // 动漫输出根目录，留空则并入 tv_dir
+	Mode string `yaml:"mode"` // hardlink | copy | move | symlink
+
+	// MediaDir 媒体库根目录，下面自动建 Movies / TVShows / Anime 三个子目录
+	MediaDir string `yaml:"media_dir"`
 
 	WriteMovieNFO   bool `yaml:"movie_nfo"`
 	WriteTVNFO      bool `yaml:"tvshow_nfo"`
@@ -57,10 +56,22 @@ type TransferConfig struct {
 	AnimeFile   string `yaml:"anime_file"`
 }
 
+// 媒体库的三个固定子目录名
+const (
+	subDirMovie = "Movies"
+	subDirTV    = "TVShows"
+	subDirAnime = "Anime"
+)
+
+// 三个输出根目录，均由 media_dir 推导
+func (t *TransferConfig) MovieRoot() string { return filepath.Join(t.MediaDir, subDirMovie) }
+func (t *TransferConfig) TVRoot() string    { return filepath.Join(t.MediaDir, subDirTV) }
+func (t *TransferConfig) AnimeRoot() string { return filepath.Join(t.MediaDir, subDirAnime) }
+
 // SourceConfig 源目录
 type SourceConfig struct {
 	Path string `yaml:"path"`
-	// Type 为空时自动判断，可填 movie / tv
+	// Type 留空即自动分类（推荐），也可强制指定 movie / tv / anime
 	Type string `yaml:"type"`
 	// 是否递归子目录
 	Recursive *bool `yaml:"recursive"`
@@ -166,28 +177,20 @@ func (c *Config) validate(requireAPI bool) error {
 		}
 	}
 
-	if c.Transfer.MovieDir == "" && c.Transfer.TVDir == "" && c.Transfer.AnimeDir == "" {
-		return fmt.Errorf("transfer.movie_dir、tv_dir、anime_dir 至少要配置一个")
+	// media_dir 只填到媒体库根目录，Movies / TVShows / Anime 由程序自动创建
+	if strings.TrimSpace(c.Transfer.MediaDir) == "" {
+		return fmt.Errorf("transfer.media_dir 未配置，应填媒体库根目录，例如 D:/Media")
 	}
-	// 动漫没单独配目录时并入剧集目录，不影响使用
-	if c.Transfer.AnimeDir == "" {
-		c.Transfer.AnimeDir = c.Transfer.TVDir
+	absMedia, err := filepath.Abs(c.Transfer.MediaDir)
+	if err != nil {
+		return fmt.Errorf("transfer.media_dir 无效: %w", err)
 	}
-	for _, d := range []string{c.Transfer.MovieDir, c.Transfer.TVDir, c.Transfer.AnimeDir} {
-		if d == "" {
-			continue
-		}
-		abs, err := filepath.Abs(d)
-		if err != nil {
-			return fmt.Errorf("输出目录无效 %s: %w", d, err)
-		}
-		if err := os.MkdirAll(abs, 0o775); err != nil {
-			return fmt.Errorf("无法创建输出目录 %s: %w", abs, err)
+	c.Transfer.MediaDir = absMedia
+	for _, d := range []string{c.Transfer.MovieRoot(), c.Transfer.TVRoot(), c.Transfer.AnimeRoot()} {
+		if err := os.MkdirAll(d, 0o775); err != nil {
+			return fmt.Errorf("无法创建输出目录 %s: %w", d, err)
 		}
 	}
-	c.Transfer.MovieDir = absOrEmpty(c.Transfer.MovieDir)
-	c.Transfer.TVDir = absOrEmpty(c.Transfer.TVDir)
-	c.Transfer.AnimeDir = absOrEmpty(c.Transfer.AnimeDir)
 
 	if c.Watch.Interval <= 0 {
 		c.Watch.Interval = 300
@@ -198,13 +201,12 @@ func (c *Config) validate(requireAPI bool) error {
 	if c.TMDB.Language == "" {
 		c.TMDB.Language = "zh-CN"
 	}
-	// base_url 留空是合法的：NewTMDB 会按内置域名列表自动探测可用域名
+	// base_url 留空就用内置默认域名
 	if c.TMDB.ImageBase == "" {
 		c.TMDB.ImageBase = "https://image.tmdb.org/t/p/original"
 	}
 	c.TMDB.BaseURL = strings.TrimRight(strings.TrimSpace(c.TMDB.BaseURL), "/")
 	c.TMDB.ImageBase = strings.TrimRight(strings.TrimSpace(c.TMDB.ImageBase), "/")
-	c.TMDB.Proxy = strings.TrimSpace(c.TMDB.Proxy)
 	return nil
 }
 

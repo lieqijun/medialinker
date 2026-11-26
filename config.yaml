@@ -1,5 +1,8 @@
+# ============================================================
 # media-linker 配置文件
-# 用法：把本文件复制为 config.yaml，改下面几处标了必改的地方。
+# 只需要改三处：tmdb.api_key、transfer.media_dir、sources[0].path
+# 改完双击 run.bat 即可
+# ============================================================
 
 # ---------- TMDB ----------
 # 必改：到 https://www.themoviedb.org/settings/api 注册后拿 API Key
@@ -7,29 +10,23 @@
 tmdb:
   api_key: "把这里换成你的 TMDB API Key"
   language: zh-CN          # zh-CN 中文 / en-US 英文
-  # base_url 留空即可：程序会依次尝试 api.tmdb.org → api.themoviedb.org
-  # → tmdb.nastool.cn → tmdb.nastool.workers.dev，用第一个能连通的。
-  # 注意：国内 api.themoviedb.org 常被 DNS 污染，而 api.tmdb.org 通常能直连，
-  # 所以默认先试 api.tmdb.org（nastool 也是这个默认值）。
-  # 只有在你有自己的反代镜像时才需要填这一项。
+  # 默认用 https://api.tmdb.org/3，国内可直连，不用改也不用挂代理。
+  # 只有你自己搭了反代镜像时才需要填这一项。
   base_url: ""
   image_base: "https://image.tmdb.org/t/p/original"
-  # 上面四个域名都不通时，才需要代理：填本地代理端口，如 http://127.0.0.1:7890
-  proxy: ""
   qps: 4                   # 每秒请求数，TMDB 限制约 50/s，4 足够安全
 
 # ---------- 整理规则 ----------
 transfer:
-  # hardlink 硬链接（不占额外空间，但要求源和目标在同一分区）
+  # hardlink 硬链接（不占额外空间，要求源和媒体库在同一个硬盘/分区）
   # copy     复制（跨盘可用，占双倍空间）
   # move     移动（源文件会被删掉）
   # symlink  软链接（Windows 需要管理员权限或开发者模式）
   mode: hardlink
 
-  # 必改：媒体库输出目录（电影 / 电视剧 / 动漫 各自独立）
-  movie_dir: "D:/Media/Movies"
-  tv_dir: "D:/Media/TVShows"
-  anime_dir: "D:/Media/Anime"   # 留空则动漫并入 tv_dir，不分开
+  # 必改：媒体库根目录。只填到 media 这一层即可，
+  # 程序会自动在下面创建 Movies / TVShows / Anime 三个子目录。
+  media_dir: "D:/Media"
 
   # 是否生成 NFO 和下载图片
   movie_nfo: true
@@ -56,15 +53,13 @@ transfer:
   anime_file: "{title} - S{season:02}E{episode:02}"
 
 # ---------- 源目录 ----------
-# 必改：填你实际放下载文件的目录，可以写多个
+# 必改：填你实际放下载文件的目录。**一个目录就够**，不用分开。
+# type 留空 = 自动分类：先按文件名判断电影还是剧集，
+# 查到 TMDB 后如果类型含「动画」就进 Anime，否则进 Movies 或 TVShows。
 sources:
-  - path: "D:/Downloads/Movies"
-    type: movie            # movie / tv / anime，留空则按文件名 + TMDB 类型自动判断
-  - path: "D:/Downloads/TV"
-    type: tv
+  - path: "D:/Downloads"
+    type: ""               # 留空即自动分类（推荐）；也可强制写 movie / tv / anime
     recursive: true        # 是否递归子目录，默认 true
-  - path: "D:/Downloads/Anime"
-    type: anime            # 显式指定：这个目录的片子一律进 anime_dir
 
 # ---------- 扫描 ----------
 watch:

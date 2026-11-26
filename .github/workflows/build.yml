@@ -11,21 +11,8 @@ permissions:
 
 jobs:
   build:
-    name: ${{ matrix.goos }}-${{ matrix.goarch }}
+    name: windows-amd64
     runs-on: ubuntu-latest
-    strategy:
-      fail-fast: false
-      matrix:
-        include:
-          - goos: windows
-            goarch: amd64
-            ext: .exe
-          - goos: linux
-            goarch: amd64
-            ext: ''
-          - goos: linux
-            goarch: arm64
-            ext: ''
 
     steps:
       - name: 拉取代码
@@ -42,28 +29,37 @@ jobs:
           go mod tidy
           go version
 
-      - name: 编译 ${{ matrix.goos }}/${{ matrix.goarch }}
+      - name: 编译 windows/amd64
         env:
-          GOOS: ${{ matrix.goos }}
-          GOARCH: ${{ matrix.goarch }}
+          GOOS: windows
+          GOARCH: amd64
           CGO_ENABLED: '0'
         run: |
-          mkdir -p dist
+          mkdir -p out
           go build -trimpath \
             -ldflags "-s -w -X main.appVersion=${{ github.ref_name }}" \
-            -o dist/medialinker-${{ matrix.goos }}-${{ matrix.goarch }}${{ matrix.ext }} .
-          ls -lh dist/
+            -o out/medialinker.exe .
+          ls -lh out/
+
+      - name: 打包（exe + config.yaml + 两个启动脚本）
+        run: |
+          cp config.yaml out/
+          cp run.bat out/
+          cp run-dryrun.bat out/
+          cd out
+          zip -9 medialinker-windows-amd64.zip medialinker.exe config.yaml run.bat run-dryrun.bat
+          unzip -l medialinker-windows-amd64.zip
 
       - name: 上传构建产物
         uses: actions/upload-artifact@v4
         with:
-          name: medialinker-${{ matrix.goos }}-${{ matrix.goarch }}
-          path: dist/medialinker-${{ matrix.goos }}-${{ matrix.goarch }}${{ matrix.ext }}
+          name: medialinker-windows-amd64
+          path: out/medialinker-windows-amd64.zip
           if-no-files-found: error
 
       - name: 发布到 Release
         if: startsWith(github.ref, 'refs/tags/')
         uses: softprops/action-gh-release@v2
         with:
-          files: dist/medialinker-${{ matrix.goos }}-${{ matrix.goarch }}${{ matrix.ext }}
+          files: out/medialinker-windows-amd64.zip
           generate_release_notes: true

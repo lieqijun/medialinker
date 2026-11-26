@@ -13,53 +13,61 @@ Go 编写，单文件可执行，内存占用通常几十 MB。
 5. 生成 Emby / Jellyfin / Kodi 能读的 `.nfo`，下载 `poster.jpg`、`fanart.jpg`
 6. 记录已处理文件，下次不会重复处理
 
-电影、电视剧、动漫分三个根目录，互不混放。
+电影、电视剧、动漫自动分流到 `media_dir` 下的 `Movies` / `TVShows` / `Anime` 三个子目录，互不混放。**源目录只需要一个**，分类由程序判断。
 
 ## 下载
 
-到 [Releases](../../releases) 下载对应文件：
+到 [Releases](../../releases) 下载 `medialinker-windows-amd64.zip`，解压后是四个文件：
 
 | 文件 | 用途 |
 |---|---|
-| `medialinker-windows-amd64.exe` | Windows x86_64 |
-| `medialinker-linux-amd64` | Linux NAS / 服务器 x86_64 |
-| `medialinker-linux-arm64` | ARM64（如部分群晖、树莓派） |
+| `medialinker.exe` | 主程序 |
+| `config.yaml` | 配置文件，改三处就能用 |
+| `run.bat` | 双击启动 |
+| `run-dryrun.bat` | 双击试运行（只查 TMDB、只打印目标路径，不写文件） |
 
-也可以用 Actions 页面里任意一次构建的 Artifact。
+只发布 Windows x86_64 版本。
 
 ## 使用
 
-**1. 准备配置**
+**1. 改配置**
 
-把 `config.example.yaml` 复制成 `config.yaml`，改三处：
+用记事本打开 `config.yaml`，只改三处：
 
-- `tmdb.api_key`：到 <https://www.themoviedb.org/settings/api> 申请
-- `transfer.movie_dir` / `transfer.tv_dir` / `transfer.anime_dir`：三个媒体库输出目录
-- `sources`：你的下载目录
+```yaml
+tmdb:
+  api_key: "你的 TMDB Key"      # 到 https://www.themoviedb.org/settings/api 申请
+transfer:
+  media_dir: "D:/Media"        # 媒体库根目录，只填到 media 这层
+sources:
+  - path: "D:/Downloads"       # 你的下载目录，一个就够
+    type: ""                   # 留空 = 自动分类
+```
 
-**2. 先验识别率（不需要 API Key）**
+`media_dir` 不用自己建子目录，程序启动时会自动创建 `Movies`、`TVShows`、`Anime` 三个。
+
+`type` 留空即可：程序先按文件名判断是电影还是剧集，查到 TMDB 后如果类型含「动画」就进 `Anime`，否则进 `Movies` 或 `TVShows`。也就是说**一个下载目录就能自动分成三类**，不需要预先分好。
+
+**2. 双击 `run-dryrun.bat` 先看结果**
+
+会联网查 TMDB 并打印每个文件将要放到的位置，一个字节都不写。第一次务必先跑这个。
+
+**3. 确认无误后双击 `run.bat`**
+
+黑窗口不要关，最小化即可。默认每 300 秒扫一次，Ctrl+C 停止。
+
+也可以在命令行里跑：
 
 ```bash
+# 只看识别结果，不联网（连 API Key 都不用填）
 medialinker.exe -config config.yaml -parse-only -once
-```
 
-只解析文件名、打印识别出的标题和季集，不联网也不写文件。识别不准时先调文件名，或给源目录加 `type: movie` / `type: tv` 强制类型。
-
-**3. 再干跑一次看目标路径**
-
-```bash
+# 连 TMDB 但不写文件
 medialinker.exe -config config.yaml -once -dry-run
-```
 
-只打印将要生成的目标路径，不写任何文件。
-
-**4. 确认无误后正式跑**
-
-```bash
+# 正式跑
 medialinker.exe -config config.yaml
 ```
-
-默认每 300 秒扫一次，Ctrl+C 退出。
 
 ## 命令参数
 
@@ -106,79 +114,47 @@ Some.Show.S02E05.MKV        ->  Some Show - S02E05.MKV     （原样保留大小
 
 程序会先摘掉模板渲染出来的视频后缀，再把源后缀拼回去，所以不会出现无后缀或 `name.mkv.mkv`。
 
-**目录**：按 TMDB 的类型分三个根目录。
+**目录**：`media_dir` 下固定三个子目录，按 TMDB 类型自动分流。
 
-| 判定 | 目标根目录 | 模板 |
+| 判定 | 目标目录 | 模板 |
 |---|---|---|
-| 电影，类型里没有「动画」 | `movie_dir` | `movie_*` |
-| 剧集，类型里没有「动画」 | `tv_dir` | `tv_*` |
-| 电影/剧集，类型里有「动画」 | `anime_dir` | `anime_*`，留空则沿用 `movie_*` / `tv_*` |
-| 源目录写了 `type: anime` | 强制 `anime_dir` | 同上 |
+| 电影，类型里没有「动画」 | `<media_dir>/Movies` | `movie_*` |
+| 剧集，类型里没有「动画」 | `<media_dir>/TVShows` | `tv_*` |
+| 电影/剧集，类型里有「动画」 | `<media_dir>/Anime` | `anime_*`，留空则沿用 `movie_*` / `tv_*` |
+| 源目录写了 `type: anime` | 强制 `Anime` | 同上 |
 
 判定顺序是：源目录显式指定 > TMDB 类型 > 文件名特征。**TMDB 类型是最终依据**，文件名像动漫（字幕组方括号、`[01]` 集数）只用于 `-parse-only` 预览时估算，不会因为名字像就误丢进动漫目录。
 
+三个子目录名是固定的，不需要也不能在配置里改。
+
 ## 连不上 TMDB 怎么办
 
-先别急，多数情况下**不用代理**。
+程序默认用 `https://api.tmdb.org/3`，**不需要代理**。
 
-`api.themoviedb.org` 在国内常被 DNS 污染，典型报错是：
+容易被坑的是另一个官方域名 `api.themoviedb.org`：国内常被 DNS 污染，解析到 `31.13.x.x` 或 `2a03:2880:` 开头（Facebook 的地址段），报错长这样：
 
 ```
-请求 TMDB 失败: ... dial tcp [2a03:2880:...]:443: connectex: A connection attempt failed ...
+请求 TMDB 失败（域名 https://api.themoviedb.org/3）: ... dial tcp [2a03:2880:...]:443 ...
 ```
 
-`2a03:2880:` 开头或 `31.13.x.x` 这类 IP 是污染结果（那是 Facebook 的地址段），不是 TMDB。
+看到这个就说明域名不对，不是网络封了 TMDB。两个官方域名走不同 CDN：
 
-**但 TMDB 有两个官方域名，走的是不同 CDN：**
-
-| 域名 | 国内常见情况 |
+| 域名 | 国内实测 |
 |---|---|
-| `api.themoviedb.org` | 常被污染，解析到 Facebook 的 IP，连不通 |
-| `api.tmdb.org` | 走 CloudFront，**多数网络可以直连** |
+| `api.tmdb.org` | 走 CloudFront，可直连 |
+| `api.themoviedb.org` | 被污染，解析到 Facebook 的 IP，超时 |
+| `tmdb.nastool.cn` | 域名已失效（NXDOMAIN） |
+| `tmdb.nastool.workers.dev` | 被污染，同样解析到 Facebook 的 IP |
 
-所以程序默认按下面顺序自动探测，用第一个通的：
+后两个是 nas-tools 里内置的镜像，实测都不能用，所以本程序没有采用。
 
-```
-api.tmdb.org → api.themoviedb.org → tmdb.nastool.cn → tmdb.nastool.workers.dev
-```
-
-启动日志会打印实际用的是哪个域名：
-
-```
-TMDB 连接正常，使用域名 https://api.tmdb.org/3
-```
-
-先自己验一下 `api.tmdb.org` 通不通（把 KEY 换成你的）：
+自己验一下（把 KEY 换成你的）：
 
 ```bash
 curl -s -o nul -w "%{http_code}\n" "https://api.tmdb.org/3/configuration?api_key=你的KEY"
 ```
 
-返回 `200` 就说明能直连，什么都不用配。返回 `000` 或超时，再往下走。
-
-**1. 走本地代理**
-
-```yaml
-tmdb:
-  proxy: "http://127.0.0.1:7890"   # Clash 7890 / v2rayN 10809 / SSR 1080
-```
-
-也可以不写配置，直接设环境变量：`set HTTPS_PROXY=http://127.0.0.1:7890`
-
-**2. 走路由器上的代理**
-
-```yaml
-  proxy: "http://192.168.31.1:7890"
-```
-
-**3. 用自己的 TMDB 反代镜像**
-
-```yaml
-  base_url: "https://your-tmdb-mirror.example.com/3"
-  image_base: "https://your-tmdb-mirror.example.com/t/p/original"
-```
-
-填了 `base_url` 就只用这一个域名，不再自动探测。镜像地址经常失效，且会把你的 API Key 经过第三方，安全性自己评估。
+返回 `200` 说明通。返回 `000` 或超时才需要想别的办法 —— 在 `tmdb.base_url` 填一个你自己能访问的 TMDB 反代即可，镜像地址经常失效，且会把 API Key 经过第三方，安全性自己评估。
 
 ## 已知限制
 
@@ -186,13 +162,12 @@ tmdb:
 - 动漫按剧集结构存放（`Season 01/` + `tvshow.nfo`），动画电影按电影结构存放
 - 多集合并的文件（如 `S01E01-E03`）只会取第一个集数
 - 没有 Web 界面，没有自动更新，纯命令行
-- 极端网络下（四个 TMDB 域名都不通）仍需代理
 
 ## 从源码编译
 
 ```bash
 go mod tidy
-go build -trimpath -ldflags "-s -w" -o medialinker .
+go build -trimpath -ldflags "-s -w" -o medialinker.exe .
 ```
 
-或者推一个 `v*` tag，GitHub Actions 会自动编译三平台并发布 Release。
+或者推一个 `v*` tag，GitHub Actions 会自动编译 Windows 版并打包成 `medialinker-windows-amd64.zip` 发布到 Release。

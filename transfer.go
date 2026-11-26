@@ -76,26 +76,27 @@ func targetPaths(p *ParsedMedia, m *MediaInfo, cfg *Config) (dir, file string, e
 	tc := cfg.Transfer
 	var rootDir, folderTpl, fileTpl, seasonTpl string
 
+	// 三个根目录都由 media_dir 派生：<media_dir>/Movies | TVShows | Anime
 	switch {
 	case p.Kind == KindMovie && !m.Anime:
-		rootDir, folderTpl, fileTpl = tc.MovieDir, tc.MovieFolder, tc.MovieFile
+		rootDir, folderTpl, fileTpl = tc.MovieRoot(), tc.MovieFolder, tc.MovieFile
 	case p.Kind == KindMovie && m.Anime:
 		// 动画电影：进动漫目录，命名沿用电影模板
-		rootDir = firstNonEmpty(tc.AnimeDir, tc.MovieDir)
+		rootDir = tc.AnimeRoot()
 		folderTpl = firstNonEmpty(tc.AnimeFolder, tc.MovieFolder)
 		fileTpl = firstNonEmpty(tc.AnimeFile, tc.MovieFile)
 	case p.Kind == KindTV && !m.Anime:
-		rootDir, folderTpl, fileTpl = tc.TVDir, tc.TVFolder, tc.TVFile
+		rootDir, folderTpl, fileTpl = tc.TVRoot(), tc.TVFolder, tc.TVFile
 		seasonTpl = tc.SeasonFolder
 	default: // 剧集形态的动漫
-		rootDir = firstNonEmpty(tc.AnimeDir, tc.TVDir)
+		rootDir = tc.AnimeRoot()
 		folderTpl = firstNonEmpty(tc.AnimeFolder, tc.TVFolder)
 		fileTpl = firstNonEmpty(tc.AnimeFile, tc.TVFile)
 		seasonTpl = tc.SeasonFolder
 	}
 
 	if rootDir == "" {
-		return "", "", fmt.Errorf("没有可用的输出目录，请检查 %s 对应的 *_dir 配置", p.Kind)
+		return "", "", fmt.Errorf("没有可用的输出目录，请检查 transfer.media_dir 配置")
 	}
 
 	folder := tidyPart(renderTemplate(folderTpl, vars))
